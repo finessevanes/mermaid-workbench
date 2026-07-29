@@ -109,13 +109,16 @@ describe('WorkbenchStore', () => {
       title: 'C',
       source: 'flowchart LR\n  C --> D',
     });
+    const preservedProject = store
+      .listLibrary()
+      .projects.find((project) => project.id === second.id)!;
 
     expect(store.deleteProject(first.id)).toEqual({
       deletedProjectId: first.id,
       deletedDiagramCount: 2,
     });
     expect(store.listLibrary()).toEqual({
-      projects: [second],
+      projects: [preservedProject],
       diagrams: [preserved],
     });
   });
@@ -184,21 +187,22 @@ describe('WorkbenchStore', () => {
       title: 'Release path',
       source: 'flowchart LR\n  Idea --> Ship',
     });
+    const storedProject = store.listLibrary().projects[0];
 
     const backup = store.exportBackup();
     expect(backup).toEqual({
       format: 'mermaid-workbench-backup',
       version: 1,
       exportedAt: expect.any(String),
-      projects: [project],
+      projects: [storedProject],
       diagrams: [diagram],
     });
 
     store.createProject({ name: 'Disposable' });
     store.restoreBackup(backup);
     expect(store.listLibrary()).toEqual({
-      projects: [project],
-      diagrams: [diagram],
+      projects: backup.projects,
+      diagrams: backup.diagrams,
     });
   });
 

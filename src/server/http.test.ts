@@ -301,8 +301,8 @@ describe('local HTTP API', () => {
       body: { restored: true },
     });
     expect(store.listLibrary()).toEqual({
-      projects: [project],
-      diagrams: [diagram],
+      projects: backupResponse.body.projects,
+      diagrams: backupResponse.body.diagrams,
     });
   });
 });

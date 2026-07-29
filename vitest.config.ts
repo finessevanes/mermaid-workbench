@@ -5,7 +5,13 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
+    include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./src/client/test/setup.ts'],
+    poolOptions: {
+      forks: {
+        execArgv: ['--disable-warning=ExperimentalWarning'],
+      },
+    },
     coverage: {
       reporter: ['text', 'html'],
     },

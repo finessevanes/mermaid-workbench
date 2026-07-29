@@ -8,12 +8,13 @@
   },
   "scripts": {
     "dev": "concurrently --kill-others --names api,web --prefix-colors blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
-    "dev:api": "tsx watch src/server/main.ts",
+    "dev:api": "node --disable-warning=ExperimentalWarning --watch --import tsx src/server/main.ts",
+    "dev:e2e": "concurrently --raw --kill-others \"npm:dev:api\" \"npm:dev:web\"",
     "dev:web": "vite",
     "build": "tsc --noEmit && vite build",
-    "start": "NODE_ENV=production tsx src/server/main.ts",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "start": "NODE_ENV=production node --disable-warning=ExperimentalWarning --import tsx src/server/main.ts",
+    "test": "node --disable-warning=ExperimentalWarning ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "node --disable-warning=ExperimentalWarning ./node_modules/vitest/vitest.mjs",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },
