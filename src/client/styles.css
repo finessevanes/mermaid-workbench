@@ -724,7 +724,7 @@ a { color: inherit; }
 .flowchart-canvas .react-flow__node { cursor: grab; }
 .flowchart-canvas .react-flow__node.dragging { cursor: grabbing; }
 
-.flowchart-node {
+.flowchart-canvas .flowchart-node {
   display: grid;
   min-height: 4.5rem;
   place-items: center;
@@ -741,33 +741,33 @@ a { color: inherit; }
   text-align: center;
 }
 
-.flowchart-node:focus-visible {
+.flowchart-canvas .flowchart-node:focus-visible {
   outline: 3px solid rgb(47 94 229 / 38%);
   outline-offset: 3px;
 }
 
-.flowchart-node--selected,
+.flowchart-canvas .flowchart-node--selected,
 .flowchart-canvas .react-flow__node.selected .flowchart-node {
   border-color: var(--cobalt-deep);
   box-shadow: 0 0 0 3px rgb(47 94 229 / 18%), var(--shadow-sm);
 }
 
-.flowchart-node--rounded-rect { border-radius: 999px; }
-.flowchart-node--circle,
-.flowchart-node--doublecircle { border-radius: 50%; }
-.flowchart-node--doublecircle { outline: 3px double var(--cobalt); outline-offset: -7px; }
-.flowchart-node--diamond { border-radius: 0; transform: rotate(45deg); }
-.flowchart-node--diamond > span { transform: rotate(-45deg); }
-.flowchart-node--stadium { border-radius: 999px; }
-.flowchart-node--subroutine { box-shadow: inset 8px 0 0 rgb(47 94 229 / 20%), inset -8px 0 0 rgb(47 94 229 / 20%), var(--shadow-sm); }
-.flowchart-node--cylinder { border-radius: 50% / 14%; }
-.flowchart-node--hexagon { clip-path: polygon(15% 0, 85% 0, 100% 50%, 85% 100%, 15% 100%, 0 50%); }
-.flowchart-node--trapezoid { clip-path: polygon(12% 0, 88% 0, 100% 100%, 0 100%); }
-.flowchart-node--inv-trapezoid { clip-path: polygon(0 0, 100% 0, 88% 100%, 12% 100%); }
-.flowchart-node--lean-left { clip-path: polygon(16% 0, 100% 0, 84% 100%, 0 100%); }
-.flowchart-node--lean-right { clip-path: polygon(0 0, 84% 0, 100% 100%, 16% 100%); }
+.flowchart-canvas .flowchart-node--rounded-rect { border-radius: 999px; }
+.flowchart-canvas .flowchart-node--circle,
+.flowchart-canvas .flowchart-node--doublecircle { border-radius: 50%; }
+.flowchart-canvas .flowchart-node--doublecircle { outline: 3px double var(--cobalt); outline-offset: -7px; }
+.flowchart-canvas .flowchart-node--diamond { border-radius: 0; transform: rotate(45deg); }
+.flowchart-canvas .flowchart-node--diamond > span { transform: rotate(-45deg); }
+.flowchart-canvas .flowchart-node--stadium { border-radius: 999px; }
+.flowchart-canvas .flowchart-node--subroutine { box-shadow: inset 8px 0 0 rgb(47 94 229 / 20%), inset -8px 0 0 rgb(47 94 229 / 20%), var(--shadow-sm); }
+.flowchart-canvas .flowchart-node--cylinder { border-radius: 50% / 14%; }
+.flowchart-canvas .flowchart-node--hexagon { clip-path: polygon(15% 0, 85% 0, 100% 50%, 85% 100%, 15% 100%, 0 50%); }
+.flowchart-canvas .flowchart-node--trapezoid { clip-path: polygon(12% 0, 88% 0, 100% 100%, 0 100%); }
+.flowchart-canvas .flowchart-node--inv-trapezoid { clip-path: polygon(0 0, 100% 0, 88% 100%, 12% 100%); }
+.flowchart-canvas .flowchart-node--lean-left { clip-path: polygon(16% 0, 100% 0, 84% 100%, 0 100%); }
+.flowchart-canvas .flowchart-node--lean-right { clip-path: polygon(0 0, 84% 0, 100% 100%, 16% 100%); }
 
-.flowchart-handle {
+.flowchart-canvas .flowchart-handle {
   width: 1px;
   height: 1px;
   min-width: 1px;
