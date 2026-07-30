@@ -4,11 +4,13 @@ import {
   useReactFlow,
   type NodeChange,
   type NodeTypes,
+  type EdgeTypes,
 } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 import type { FlowchartCanvasV1 } from '../../shared/flowchart-canvas-schema';
 import { FlowchartNode } from './FlowchartNode';
+import { FloatingFlowchartEdge } from './FloatingFlowchartEdge';
 import {
   applyReactFlowNodeChanges,
   toReactFlowEdges,
@@ -20,6 +22,7 @@ const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.1;
 
 const nodeTypes: NodeTypes = { flowchart: FlowchartNode };
+const edgeTypes: EdgeTypes = { floatingFlowchart: FloatingFlowchartEdge };
 
 export interface FlowchartCanvasProps {
   canvas: FlowchartCanvasV1;
@@ -73,6 +76,46 @@ function FlowchartCanvasContents({
   const handleNodeDragStop = useCallback(() => {
     onCommit(latestCanvasRef.current);
   }, [onCommit]);
+
+  const handleNodeNudge = useCallback((id: string, event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+    const distance = event.shiftKey ? 10 : 1;
+    const deltas: Record<string, { x: number; y: number }> = {
+      ArrowDown: { x: 0, y: distance },
+      ArrowLeft: { x: -distance, y: 0 },
+      ArrowRight: { x: distance, y: 0 },
+      ArrowUp: { x: 0, y: -distance },
+    };
+    const delta = deltas[event.key];
+    if (!delta) {
+      return;
+    }
+    const currentCanvas = latestCanvasRef.current;
+    const node = currentCanvas.nodes.find((candidate) => candidate.id === id);
+    if (!node) {
+      return;
+    }
+    event.preventDefault();
+    const nextCanvas: FlowchartCanvasV1 = {
+      ...currentCanvas,
+      nodes: currentCanvas.nodes.map((candidate) => (
+        candidate.id === id
+          ? {
+            ...candidate,
+            position: {
+              x: candidate.position.x + delta.x,
+              y: candidate.position.y + delta.y,
+            },
+          }
+          : candidate
+      )),
+    };
+    latestCanvasRef.current = nextCanvas;
+    onCanvasChange(nextCanvas);
+    onCommit(nextCanvas);
+  }, [onCanvasChange, onCommit]);
 
   const handleViewportMove = useCallback((event: unknown, viewport: { zoom: number }) => {
     if (event) {
@@ -155,9 +198,10 @@ function FlowchartCanvasContents({
       </div>
       <div className="flowchart-canvas__viewport">
         <ReactFlow
-          nodes={toReactFlowNodes(canvas)}
+          nodes={toReactFlowNodes(canvas, handleNodeNudge)}
           edges={toReactFlowEdges(canvas)}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
           panOnDrag

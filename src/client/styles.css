@@ -721,6 +721,21 @@ a { color: inherit; }
 .flowchart-canvas .react-flow__pane.dragging { cursor: grabbing; }
 .flowchart-canvas .react-flow__edge-path { stroke: var(--ink-soft); stroke-width: 1.8; }
 .flowchart-canvas .react-flow__edge-text { fill: var(--ink-soft); font-size: .73rem; font-weight: 750; }
+.flowchart-canvas .flowchart-edge--dotted { stroke-dasharray: 4 4; }
+.flowchart-canvas .flowchart-edge--thick { stroke-width: 3; }
+.flowchart-canvas .flowchart-edge--invisible { opacity: 0; pointer-events: none; }
+.flowchart-canvas .flowchart-edge__label {
+  position: absolute;
+  pointer-events: none;
+  padding: .2rem .4rem;
+  color: var(--ink-soft);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: .73rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
 .flowchart-canvas .react-flow__node { cursor: grab; }
 .flowchart-canvas .react-flow__node.dragging { cursor: grabbing; }
 

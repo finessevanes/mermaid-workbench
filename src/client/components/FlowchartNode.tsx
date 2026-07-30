@@ -25,7 +25,7 @@ export function safeShapeClass(shape: string): string {
 }
 
 export function FlowchartNode(
-  { data, selected }: NodeProps<FlowchartReactFlowNode>,
+  { id, data, selected }: NodeProps<FlowchartReactFlowNode>,
 ): React.JSX.Element {
   const { width, height } = flowchartNodeSize(data.shape, data.label);
   const shapeClass = safeShapeClass(data.shape);
@@ -36,6 +36,7 @@ export function FlowchartNode(
       aria-label={data.label}
       tabIndex={0}
       style={{ width, minHeight: height }}
+      onKeyDown={(event) => data.onNudge?.(id, event)}
     >
       <Handle
         type="target"

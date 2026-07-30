@@ -11,16 +11,79 @@ const reactFlow = vi.hoisted(() => ({
   fitView: vi.fn(),
   setViewport: vi.fn(),
   zoomTo: vi.fn(),
+  internalNodes: new Map<string, {
+    id: string;
+    data: { label: string; shape: string };
+    measured: { width: number; height: number };
+    internals: { positionAbsolute: { x: number; y: number } };
+  }>(),
 }));
 
 vi.mock('@xyflow/react', () => ({
   ReactFlow: (props: {
-    nodes: Array<{ id: string; position: { x: number; y: number } }>;
+    nodes: Array<{
+      id: string;
+      data: { label: string; shape: string };
+      position: { x: number; y: number };
+      style?: { width?: number; height?: number };
+    }>;
+    edges: Array<{
+      id: string;
+      source: string;
+      target: string;
+      data?: Record<string, unknown>;
+      markerStart?: unknown;
+      markerEnd?: unknown;
+    }>;
+    nodeTypes: Record<string, React.ComponentType<any>>;
+    edgeTypes: Record<string, React.ComponentType<any>>;
     onMove: (event: unknown, viewport: { zoom: number }) => void;
     onNodeDragStop: () => void;
     onNodesChange: (changes: unknown[]) => void;
-  }) => (
-    <div data-testid="react-flow">
+  }) => {
+    reactFlow.internalNodes.clear();
+    props.nodes.forEach((node) => {
+      reactFlow.internalNodes.set(node.id, {
+        id: node.id,
+        data: node.data,
+        measured: {
+          width: node.style?.width ?? 120,
+          height: node.style?.height ?? 72,
+        },
+        internals: { positionAbsolute: node.position },
+      });
+    });
+    const NodeComponent = props.nodeTypes.flowchart;
+    const EdgeComponent = props.edgeTypes.floatingFlowchart;
+    return (
+      <div data-testid="react-flow">
+        <svg>
+          {props.edges.map((edge) => (
+            <EdgeComponent
+              key={edge.id}
+              id={edge.id}
+              source={edge.source}
+              target={edge.target}
+              data={edge.data}
+              markerStart={edge.markerStart ? 'url(#arrowclosed)' : undefined}
+              markerEnd={edge.markerEnd ? 'url(#arrowclosed)' : undefined}
+              sourceX={0}
+              sourceY={0}
+              targetX={0}
+              targetY={0}
+              sourcePosition="right"
+              targetPosition="left"
+            />
+          ))}
+        </svg>
+        {props.nodes.map((node) => (
+          <NodeComponent
+            key={node.id}
+            id={node.id}
+            data={node.data}
+            selected={false}
+          />
+        ))}
       <button
         type="button"
         aria-label="Move idea node"
@@ -49,12 +112,44 @@ vi.mock('@xyflow/react', () => ({
       >
         Pan pane
       </button>
-    </div>
+      </div>
+    );
+  },
+  BaseEdge: (props: { id: string; path: string; className?: string; markerStart?: string; markerEnd?: string }) => (
+    <path
+      data-testid={`edge-${props.id}`}
+      className={props.className}
+      d={props.path}
+      markerStart={props.markerStart}
+      markerEnd={props.markerEnd}
+    />
   ),
+  EdgeLabelRenderer: ({ children }: PropsWithChildren) => <>{children}</>,
+  getBezierPath: ({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  }: {
+    sourceX: number;
+    sourceY: number;
+    sourcePosition: string;
+    targetX: number;
+    targetY: number;
+    targetPosition: string;
+  }) => [
+    `M ${sourceX} ${sourceY} ${sourcePosition} L ${targetX} ${targetY} ${targetPosition}`,
+    (sourceX + targetX) / 2,
+    (sourceY + targetY) / 2,
+  ],
   Handle: () => null,
-  Position: { Bottom: 'bottom', Top: 'top' },
+  Position: { Bottom: 'bottom', Left: 'left', Right: 'right', Top: 'top' },
+  MarkerType: { ArrowClosed: 'arrowclosed' },
   ReactFlowProvider: ({ children }: PropsWithChildren) => <>{children}</>,
   useReactFlow: () => reactFlow,
+  useInternalNode: (id: string) => reactFlow.internalNodes.get(id),
 }));
 
 const canvas: FlowchartCanvasV1 = {
@@ -176,6 +271,140 @@ describe('FlowchartCanvas', () => {
       nodes: expect.arrayContaining([
         expect.objectContaining({ id: 'idea', position: { x: 210, y: 130 } }),
       ]),
+    }));
+  });
+
+  it('reroutes a rendered edge and preserves its label as a connected node moves', async () => {
+    const user = userEvent.setup();
+    const labelledCanvas: FlowchartCanvasV1 = {
+      ...canvas,
+      edges: [{ ...canvas.edges[0], label: 'ships' }],
+    };
+    function LabelledHarness() {
+      const [currentCanvas, setCurrentCanvas] = useState(labelledCanvas);
+      return (
+        <FlowchartCanvas
+          canvas={currentCanvas}
+          onCanvasChange={setCurrentCanvas}
+          onCommit={vi.fn()}
+          onResetLayout={vi.fn()}
+        />
+      );
+    }
+    render(<LabelledHarness />);
+
+    const edge = screen.getByTestId('edge-idea-ship-0');
+    const initialPath = edge.getAttribute('d');
+    expect(screen.getByText('ships')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Move idea node' }));
+
+    expect(edge).not.toHaveAttribute('d', initialPath);
+    expect(screen.getByText('ships')).toBeInTheDocument();
+  });
+
+  it('changes an edge attachment from right-to-left to left-to-right when a node crosses its neighbor', async () => {
+    const user = userEvent.setup();
+    render(
+      <CanvasHarness
+        onCanvasChange={vi.fn()}
+        onCommit={vi.fn()}
+        onResetLayout={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('edge-idea-ship-0')).toHaveAttribute(
+      'd',
+      expect.stringContaining('right'),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Move idea node' }));
+
+    expect(screen.getByTestId('edge-idea-ship-0')).toHaveAttribute(
+      'd',
+      expect.stringContaining('left'),
+    );
+  });
+
+  it('maps edge markers and line styles into the rendered edge without dropping its label', () => {
+    const metadataCanvas: FlowchartCanvasV1 = {
+      ...canvas,
+      edges: [
+        { ...canvas.edges[0], id: 'dotted', lineStyle: 'dotted', arrowStart: true, label: 'dotted' },
+        { ...canvas.edges[0], id: 'thick', lineStyle: 'thick', arrowEnd: false, label: 'thick' },
+        { ...canvas.edges[0], id: 'invisible', lineStyle: 'invisible', arrowEnd: false, label: 'invisible' },
+      ],
+    };
+    render(
+      <FlowchartCanvas
+        canvas={metadataCanvas}
+        onCanvasChange={vi.fn()}
+        onCommit={vi.fn()}
+        onResetLayout={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('edge-dotted')).toHaveClass('flowchart-edge--dotted');
+    expect(screen.getByTestId('edge-dotted')).toHaveAttribute('marker-start');
+    expect(screen.getByTestId('edge-thick')).toHaveClass('flowchart-edge--thick');
+    expect(screen.getByTestId('edge-thick')).not.toHaveAttribute('marker-end');
+    expect(screen.getByTestId('edge-invisible')).toHaveClass('flowchart-edge--invisible');
+    expect(screen.getByText('dotted')).toBeInTheDocument();
+    expect(screen.getByText('thick')).toBeInTheDocument();
+    expect(screen.getByText('invisible')).toBeInTheDocument();
+  });
+
+  it('nudges a focused node by one pixel and commits one copied canvas without changing topology', async () => {
+    const user = userEvent.setup();
+    const onCanvasChange = vi.fn();
+    const onCommit = vi.fn();
+    render(
+      <CanvasHarness
+        onCanvasChange={onCanvasChange}
+        onCommit={onCommit}
+        onResetLayout={vi.fn()}
+      />,
+    );
+
+    const idea = screen.getByLabelText('Idea');
+    idea.focus();
+    await user.keyboard('{ArrowRight}');
+
+    expect(onCanvasChange).toHaveBeenCalledOnce();
+    expect(onCommit).toHaveBeenCalledOnce();
+    const nextCanvas = onCommit.mock.calls[0][0] as FlowchartCanvasV1;
+    expect(nextCanvas).not.toBe(canvas);
+    expect(nextCanvas.nodes).toEqual([
+      expect.objectContaining({ id: 'idea', position: { x: 41, y: 80 } }),
+      canvas.nodes[1],
+    ]);
+    expect(nextCanvas.edges).toEqual(canvas.edges);
+  });
+
+  it('nudges a focused node ten pixels with Shift+Arrow and leaves unrelated keys alone', async () => {
+    const user = userEvent.setup();
+    const onCanvasChange = vi.fn();
+    const onCommit = vi.fn();
+    render(
+      <CanvasHarness
+        onCanvasChange={onCanvasChange}
+        onCommit={onCommit}
+        onResetLayout={vi.fn()}
+      />,
+    );
+
+    const idea = screen.getByLabelText('Idea');
+    idea.focus();
+    await user.keyboard('{Shift>}{ArrowDown}{/Shift}');
+    await user.keyboard('a');
+
+    expect(onCanvasChange).toHaveBeenCalledOnce();
+    expect(onCommit).toHaveBeenCalledOnce();
+    expect(onCommit).toHaveBeenLastCalledWith(expect.objectContaining({
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ id: 'idea', position: { x: 40, y: 90 } }),
+      ]),
+      edges: canvas.edges,
     }));
   });
 
