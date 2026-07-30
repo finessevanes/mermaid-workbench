@@ -73,6 +73,10 @@ function releasePointerCapture(
 export function PreviewViewport(
   props: PreviewViewportProps,
 ): React.JSX.Element {
+  const [copyResult, setCopyResult] = useState<{
+    error: string;
+    state: 'copied' | 'failed';
+  } | null>(null);
   const [transform, setTransform] = useState<ViewportTransform>({
     x: 0,
     y: 0,
@@ -310,6 +314,21 @@ export function PreviewViewport(
     setTransform((current) => panViewport(current, delta));
   };
 
+  const copyError = async () => {
+    if (!props.error) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(props.error);
+      setCopyResult({ error: props.error, state: 'copied' });
+    } catch {
+      setCopyResult({ error: props.error, state: 'failed' });
+    }
+  };
+
+  const copyState =
+    copyResult?.error === props.error ? copyResult.state : 'idle';
+
   const loading: ReactNode =
     props.rendering && props.svg.length === 0 ? (
       <div className="preview__loading">Rendering diagram…</div>
@@ -398,6 +417,18 @@ export function PreviewViewport(
             <>
               <strong>Mermaid syntax error</strong>
               <span>{props.error}</span>
+              <button
+                type="button"
+                aria-label="Copy Mermaid syntax error"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => void copyError()}
+              >
+                {copyState === 'copied'
+                  ? 'Copied'
+                  : copyState === 'failed'
+                    ? 'Copy failed'
+                    : 'Copy error'}
+              </button>
             </>
           ) : null}
         </div>

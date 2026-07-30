@@ -422,6 +422,23 @@ a { color: inherit; }
 
 .preview__error strong { flex: 0 0 auto; }
 .preview__error span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview__error button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: .2rem .45rem;
+  color: inherit;
+  background: rgb(255 255 255 / 65%);
+  border: 1px solid rgb(109 24 33 / 28%);
+  border-radius: .3rem;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+.preview__error button:hover { background: #fff; }
+.preview__error button:focus-visible {
+  outline: 2px solid currentcolor;
+  outline-offset: 2px;
+}
 
 .editor-preview {
   position: relative;
