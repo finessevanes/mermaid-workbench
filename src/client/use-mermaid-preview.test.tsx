@@ -3,6 +3,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  defaultMermaidRenderer,
   useMermaidPreview,
   type MermaidRenderer,
 } from './use-mermaid-preview';
@@ -117,5 +118,13 @@ describe('useMermaidPreview', () => {
       await Promise.resolve();
     });
     expect(screen.getByTestId('svg')).toHaveTextContent('newest');
+  });
+});
+
+describe('defaultMermaidRenderer', () => {
+  it('retains the existing empty-source error', async () => {
+    await expect(defaultMermaidRenderer('   ', 'empty')).rejects.toThrow(
+      'Mermaid source cannot be empty.',
+    );
   });
 });

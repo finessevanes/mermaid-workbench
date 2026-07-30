@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { getMermaid } from './mermaid-runtime';
 
 export interface MermaidPreviewState {
   svg: string;
@@ -11,8 +12,6 @@ export type MermaidRenderer = (
   renderId: string,
 ) => Promise<string>;
 
-let mermaidInitialized = false;
-
 export const defaultMermaidRenderer: MermaidRenderer = async (
   source,
   renderId,
@@ -20,24 +19,7 @@ export const defaultMermaidRenderer: MermaidRenderer = async (
   if (source.trim().length === 0) {
     throw new Error('Mermaid source cannot be empty.');
   }
-  const { default: mermaid } = await import('mermaid');
-  if (!mermaidInitialized) {
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      theme: 'base',
-      themeVariables: {
-        primaryColor: '#e9efff',
-        primaryBorderColor: '#2f5ee5',
-        primaryTextColor: '#111a2d',
-        lineColor: '#526078',
-        secondaryColor: '#fff4d6',
-        tertiaryColor: '#f4f6fa',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
-      },
-    });
-    mermaidInitialized = true;
-  }
+  const mermaid = await getMermaid();
   const result = await mermaid.render(renderId, source);
   return result.svg;
 };
