@@ -2,19 +2,27 @@ import { expect, test } from '@playwright/test';
 
 test('persists an interactive flowchart layout and keeps unsupported diagrams static', async ({
   page,
-}) => {
+}, testInfo) => {
+  const runIdentity = [
+    testInfo.workerIndex,
+    testInfo.repeatEachIndex,
+    testInfo.retry,
+  ].join('-');
+  const projectName = `Launch maps ${runIdentity}`;
+  const flowchartTitle = `Release path ${runIdentity}`;
+  const sequenceTitle = `Sequence path ${runIdentity}`;
+
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
 
-  await page
-    .getByRole('button', { name: 'Create your first project' })
-    .click();
-  await page.getByLabel('Project name').fill('Launch maps');
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByLabel('Project name').fill(projectName);
   await page.getByRole('button', { name: 'Create project' }).click();
+  const projectRegion = page.getByRole('region', { name: projectName });
 
   const source = 'flowchart LR\n  idea[Idea] --> ship((Ship))';
-  await page.getByLabel('Import .mmd').setInputFiles({
-    name: 'Release path.mmd',
+  await projectRegion.getByLabel('Import .mmd').setInputFiles({
+    name: `${flowchartTitle}.mmd`,
     mimeType: 'text/plain',
     buffer: Buffer.from(source),
   });
@@ -24,6 +32,12 @@ test('persists an interactive flowchart layout and keeps unsupported diagrams st
   });
   await expect(interactiveCanvas).toBeVisible();
   await expect(page.getByLabel('Mermaid source')).toHaveValue(source);
+  const resetZoom = page.getByRole('button', {
+    name: '100%',
+    exact: true,
+  });
+  await resetZoom.click();
+  await page.evaluate(() => window.scrollTo(0, 0));
 
   const ideaNode = page.locator('.react-flow__node[data-id="idea"]');
   const edgePath = page.locator(
@@ -69,13 +83,25 @@ test('persists an interactive flowchart layout and keeps unsupported diagrams st
   await expect(saveStatus).toContainText('Saved');
 
   await page.reload();
-  await page.getByRole('button', { name: 'Open Release path' }).click();
+  await page
+    .getByRole('button', { name: `Open ${flowchartTitle}` })
+    .click();
   await expect(interactiveCanvas).toBeVisible();
+  await resetZoom.click();
+  await page.evaluate(() => window.scrollTo(0, 0));
 
-  const restoredIdeaBox = await ideaNode.boundingBox();
-  expect(restoredIdeaBox).not.toBeNull();
-  expect(Math.abs(restoredIdeaBox!.x - draggedIdeaBox.x)).toBeLessThanOrEqual(2);
-  expect(Math.abs(restoredIdeaBox!.y - draggedIdeaBox.y)).toBeLessThanOrEqual(2);
+  let restoredIdeaBox = draggedIdeaBox;
+  await expect(async () => {
+    const nextIdeaBox = await ideaNode.boundingBox();
+    expect(nextIdeaBox).not.toBeNull();
+    restoredIdeaBox = nextIdeaBox!;
+    expect(
+      Math.abs(restoredIdeaBox.x - draggedIdeaBox.x),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(restoredIdeaBox.y - draggedIdeaBox.y),
+    ).toBeLessThanOrEqual(2);
+  }).toPass();
 
   const resetAccepted = new Promise<void>((resolve, reject) => {
     page.once('dialog', async (dialog) => {
@@ -99,8 +125,8 @@ test('persists an interactive flowchart layout and keeps unsupported diagrams st
     expect(resetIdeaBox).not.toBeNull();
     expect(
       Math.hypot(
-        resetIdeaBox!.x - restoredIdeaBox!.x,
-        resetIdeaBox!.y - restoredIdeaBox!.y,
+        resetIdeaBox!.x - restoredIdeaBox.x,
+        resetIdeaBox!.y - restoredIdeaBox.y,
       ),
     ).toBeGreaterThan(2);
   }).toPass();
@@ -108,8 +134,8 @@ test('persists an interactive flowchart layout and keeps unsupported diagrams st
 
   await page.getByRole('button', { name: 'Library' }).click();
   const sequenceSource = 'sequenceDiagram\n  Alice->>Bob: Hello';
-  await page.getByLabel('Import .mmd').setInputFiles({
-    name: 'Sequence path.mmd',
+  await projectRegion.getByLabel('Import .mmd').setInputFiles({
+    name: `${sequenceTitle}.mmd`,
     mimeType: 'text/plain',
     buffer: Buffer.from(sequenceSource),
   });

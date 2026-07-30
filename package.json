@@ -24,7 +24,7 @@
     "start": "NODE_ENV=production node --disable-warning=ExperimentalWarning --import tsx src/server/main.ts",
     "test": "node --disable-warning=ExperimentalWarning ./node_modules/vitest/vitest.mjs run",
     "test:watch": "node --disable-warning=ExperimentalWarning ./node_modules/vitest/vitest.mjs",
-    "test:e2e": "playwright test",
+    "test:e2e": "node --import tsx e2e/run-playwright.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

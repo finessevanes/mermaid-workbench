@@ -2,7 +2,13 @@ import { defineConfig } from '@playwright/test';
 
 delete process.env.NO_COLOR;
 
-const e2eDataDirectory = `./work/e2e-data-${process.pid}`;
+const e2eDataDirectory =
+  process.env.MERMAID_WORKBENCH_E2E_DATA_DIR;
+if (!e2eDataDirectory) {
+  throw new Error(
+    'Run browser tests through npm run test:e2e to isolate their data.',
+  );
+}
 
 export default defineConfig({
   testDir: './e2e',
