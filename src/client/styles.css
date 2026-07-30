@@ -363,7 +363,7 @@ a { color: inherit; }
 .project-empty p { margin-bottom: 0; color: var(--ink-soft); font-size: .85rem; line-height: 1.5; }
 
 /* Previews */
-.preview, .editor-preview {
+.preview {
   position: relative;
   overflow: auto;
   background:
@@ -422,6 +422,68 @@ a { color: inherit; }
 
 .preview__error strong { flex: 0 0 auto; }
 .preview__error span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.editor-preview {
+  position: relative;
+  min-height: 35rem;
+  flex: 1;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+  background:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px),
+    var(--panel-blue);
+  background-size: 28px 28px;
+}
+
+.editor-preview[data-dragging="true"] { cursor: grabbing; }
+
+.preview__transform {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.editor-preview .preview__canvas {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+.editor-preview .preview__canvas svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+}
+
+.preview__loading,
+.preview__error { z-index: 1; }
+
+.preview-header__actions,
+.preview-toolbar {
+  display: flex;
+  gap: .4rem;
+  align-items: center;
+}
+
+.preview-toolbar__button {
+  min-width: 2.2rem;
+  min-height: 2.2rem;
+  padding: .45rem .6rem;
+}
+
+.preview-toolbar__zoom {
+  min-width: 3.8rem;
+  color: var(--ink-soft);
+  font-size: .72rem;
+  font-weight: 800;
+  text-align: center;
+}
 
 /* Editor */
 .editor-shell {
@@ -542,9 +604,6 @@ a { color: inherit; }
 }
 
 .source-footer { display: flex; justify-content: space-between; padding: .8rem 1rem; color: var(--ink-faint); border-top: 1px solid var(--line); font-size: .68rem; }
-.editor-preview { display: grid; min-height: 0; flex: 1; background-size: 28px 28px; }
-.editor-preview .preview__canvas { min-height: 35rem; padding: clamp(1.5rem, 4vw, 4rem); }
-.editor-preview .preview__canvas svg { max-height: 70vh; }
 
 /* Dialogs */
 .dialog {
@@ -590,7 +649,6 @@ a { color: inherit; }
   .workspace-panel:first-child { border-radius: var(--radius-md) var(--radius-md) 0 0; }
   .workspace-panel:last-child { border-radius: 0 0 var(--radius-md) var(--radius-md); }
   .source-fields textarea { min-height: 24rem; }
-  .editor-preview .preview__canvas { min-height: 30rem; }
 }
 
 @media (max-width: 620px) {
