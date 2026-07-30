@@ -2,6 +2,15 @@
   "name": "mermaid-workbench",
   "version": "0.1.0",
   "private": true,
+  "description": "A local-first library and editor for Mermaid diagrams.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/finessevanes/mermaid-workbench.git"
+  },
+  "bugs": {
+    "url": "https://github.com/finessevanes/mermaid-workbench/issues"
+  },
+  "homepage": "https://github.com/finessevanes/mermaid-workbench#readme",
   "type": "module",
   "engines": {
     "node": ">=24"

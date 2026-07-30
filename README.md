@@ -1,9 +1,32 @@
 # Mermaid Workbench
 
-Mermaid Workbench is a private, local library for organizing, editing, and
-rendering Mermaid diagrams. It runs as a loopback-only web application, stores
-its library in SQLite, and loads Mermaid from the installed application
-dependency rather than a CDN.
+[![CI](https://github.com/finessevanes/mermaid-workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/finessevanes/mermaid-workbench/actions/workflows/ci.yml)
+
+Mermaid Workbench is a local-first library and editor for organizing, writing,
+and rendering Mermaid diagrams. It combines a focused source editor with a
+live, zoomable preview and keeps the complete library in a local SQLite
+database.
+
+## Features
+
+- Organize diagrams into projects.
+- Edit Mermaid source with a live, last-valid preview.
+- Collapse the source editor into a slim rail for more canvas space.
+- Pinch to zoom, use a two-finger gesture or mouse drag to pan, and quickly
+  return to fit-to-view or 100%.
+- Autosave valid diagrams with optimistic conflict protection.
+- Import and export `.mmd` files.
+- Export and transactionally restore complete library backups.
+- Run without a CDN or external diagram-rendering service.
+
+## Project status
+
+The current release is a single-user, loopback-only desktop web application.
+It is intentionally bound to `127.0.0.1` and is not ready to be exposed
+directly to the public internet.
+
+Email magic-link authentication and isolated personal workspaces are planned
+before the hosted public release. Follow the repository for that work.
 
 ## Run locally
 
@@ -66,6 +89,17 @@ and submitted versions instead of overwriting either silently.
 
 Keep exported backups somewhere outside the source checkout.
 
+## Preview navigation
+
+- Pinch on a Mac trackpad to zoom around the gesture position.
+- Slide with two fingers or drag with the primary mouse button to pan.
+- Use the preview toolbar to zoom in, zoom out, fit the complete diagram, or
+  return to 100%.
+- Zoom is clamped between 10% and 400%.
+
+The browser does not expose a dependable exact three-finger trackpad gesture,
+so Mermaid Workbench uses standard two-finger wheel movement for panning.
+
 ## Verification commands
 
 ```bash
@@ -85,3 +119,18 @@ The server binds only to `127.0.0.1`. Requests with an unexpected browser
 `Origin` are rejected, JSON bodies are size-limited and strictly validated,
 record identifiers must be UUIDs, and filesystem paths are never accepted by
 the API.
+
+Do not change the bind address to `0.0.0.0` and expose the current server
+without adding authentication and per-user authorization first.
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
+development workflow and [SECURITY.md](SECURITY.md) for vulnerability
+reporting. Community participation is governed by
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+## License
+
+No open-source license has been granted. The source is publicly available for
+inspection and contribution, but reuse and redistribution rights are reserved.
