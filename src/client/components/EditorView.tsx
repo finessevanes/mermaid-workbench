@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useReducer,
   useRef,
   useState,
@@ -20,6 +21,7 @@ import {
   type MermaidRenderer,
 } from '../use-mermaid-preview';
 import { Dialog } from './Dialog';
+import { PreviewViewport } from './PreviewViewport';
 
 interface EditorViewProps {
   diagram: DiagramRecord;
@@ -66,7 +68,11 @@ export function EditorView({
     status: 'saved',
   });
   const [conflict, setConflict] = useState<ConflictDetails | null>(null);
+  const [sourceCollapsed, setSourceCollapsed] = useState(false);
   const pendingSave = useRef<Promise<void> | null>(null);
+  const collapseSourceRef = useRef<HTMLButtonElement>(null);
+  const expandSourceRef = useRef<HTMLButtonElement>(null);
+  const sourceFocusTargetRef = useRef<'collapse' | 'expand' | null>(null);
   const preview = useMermaidPreview(draft.source, renderDiagram);
 
   useEffect(() => {
@@ -77,7 +83,30 @@ export function EditorView({
     });
     dispatchSave({ type: 'RESET' });
     setConflict(null);
+    setSourceCollapsed(false);
   }, [diagram.id]);
+
+  const collapseSource = () => {
+    sourceFocusTargetRef.current = 'expand';
+    setSourceCollapsed(true);
+    window.requestAnimationFrame(() => expandSourceRef.current?.focus());
+  };
+
+  const expandSource = () => {
+    sourceFocusTargetRef.current = 'collapse';
+    setSourceCollapsed(false);
+    window.requestAnimationFrame(() => collapseSourceRef.current?.focus());
+  };
+
+  useLayoutEffect(() => {
+    const focusTarget = sourceFocusTargetRef.current;
+    if (focusTarget === 'expand') {
+      expandSourceRef.current?.focus();
+    } else if (focusTarget === 'collapse') {
+      collapseSourceRef.current?.focus();
+    }
+    sourceFocusTargetRef.current = null;
+  }, [sourceCollapsed]);
 
   const save = useCallback(
     (options?: { forceVersion?: number }) => {
@@ -213,6 +242,7 @@ export function EditorView({
             <div
               className={`save-state save-state--${saveState.status}`}
               role="status"
+              aria-label="Save status"
               aria-live="polite"
             >
               <span aria-hidden="true" />
@@ -251,75 +281,90 @@ export function EditorView({
           </div>
         </header>
 
-        <div className="workspace-grid">
-          <section className="workspace-panel workspace-panel--source">
-            <div className="workspace-panel__header">
-              <div>
-                <span className="panel-index">01</span>
-                <h2>Source</h2>
-              </div>
-              <span className="panel-hint">Mermaid syntax</span>
-            </div>
-            <div className="source-fields">
-              <label>
-                <span>Diagram title</span>
-                <input
-                  value={draft.title}
-                  maxLength={120}
-                  onChange={(event) =>
-                    updateDraft({ title: event.currentTarget.value })
-                  }
-                />
-              </label>
-              <label className="source-editor">
-                <span>Mermaid source</span>
-                <textarea
-                  value={draft.source}
-                  spellCheck={false}
-                  onChange={(event) =>
-                    updateDraft({ source: event.currentTarget.value })
-                  }
-                />
-              </label>
-            </div>
-            <footer className="source-footer">
-              <span>{draft.source.split('\n').length} lines</span>
-              <span>{draft.source.length.toLocaleString()} characters</span>
-            </footer>
-          </section>
-
-          <section
-            className="workspace-panel workspace-panel--preview"
-            aria-labelledby="preview-heading"
-          >
-            <div className="workspace-panel__header">
-              <div>
-                <span className="panel-index">02</span>
-                <h2 id="preview-heading">Preview</h2>
-              </div>
-              <span className="panel-hint">
-                {preview.rendering ? 'Rendering…' : 'Live'}
-              </span>
-            </div>
-            <div className="editor-preview">
-              {preview.rendering && preview.svg.length === 0 ? (
-                <div className="preview__loading">Rendering diagram…</div>
-              ) : null}
-              <div
-                className="preview__canvas"
-                data-testid="mermaid-preview"
-                dangerouslySetInnerHTML={{ __html: preview.svg }}
-              />
-              <div className="preview__error" role="alert" aria-live="assertive">
+        <div
+          className={`workspace-grid${sourceCollapsed ? ' workspace-grid--source-collapsed' : ''}`}
+        >
+          {sourceCollapsed ? (
+            <section
+              className="workspace-panel workspace-panel--source-collapsed"
+              aria-label="Source"
+            >
+              <button
+                ref={expandSourceRef}
+                type="button"
+                className="source-rail-toggle"
+                aria-label="Expand source"
+                onClick={expandSource}
+              >
+                <span aria-hidden="true">›</span>
+                <span className="source-rail-toggle__label source-rail-toggle__label--desktop">
+                  Source
+                </span>
+                <span className="source-rail-toggle__label source-rail-toggle__label--compact">
+                  Show source
+                </span>
                 {preview.error ? (
-                  <>
-                    <strong>Mermaid syntax error</strong>
-                    <span>{preview.error}</span>
-                  </>
+                  <span className="source-rail-toggle__error">
+                    Source has a syntax error
+                  </span>
                 ) : null}
+              </button>
+            </section>
+          ) : (
+            <section className="workspace-panel workspace-panel--source">
+              <div className="workspace-panel__header">
+                <div>
+                  <span className="panel-index">01</span>
+                  <h2>Source</h2>
+                </div>
+                <div className="source-header__actions">
+                  <span className="panel-hint">Mermaid syntax</span>
+                  <button
+                    ref={collapseSourceRef}
+                    type="button"
+                    className="icon-button source-collapse-button"
+                    aria-label="Collapse source"
+                    onClick={collapseSource}
+                  >
+                    <span aria-hidden="true">‹</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          </section>
+              <div className="source-fields">
+                <label>
+                  <span>Diagram title</span>
+                  <input
+                    value={draft.title}
+                    maxLength={120}
+                    onChange={(event) =>
+                      updateDraft({ title: event.currentTarget.value })
+                    }
+                  />
+                </label>
+                <label className="source-editor">
+                  <span>Mermaid source</span>
+                  <textarea
+                    value={draft.source}
+                    spellCheck={false}
+                    onChange={(event) =>
+                      updateDraft({ source: event.currentTarget.value })
+                    }
+                  />
+                </label>
+              </div>
+              <footer className="source-footer">
+                <span>{draft.source.split('\n').length} lines</span>
+                <span>{draft.source.length.toLocaleString()} characters</span>
+              </footer>
+            </section>
+          )}
+
+          <PreviewViewport
+            key={diagram.id}
+            svg={preview.svg}
+            rendering={preview.rendering}
+            error={preview.error}
+          />
         </div>
       </section>
 

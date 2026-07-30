@@ -239,17 +239,70 @@ describe('App', () => {
     fireEvent.change(source, {
       target: { value: 'flowchart LR\n  Idea --> Build --> Ship' },
     });
-    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+    expect(screen.getByRole('status', { name: 'Save status' }))
+      .toHaveTextContent('Unsaved changes');
 
     await waitFor(() => {
       expect(client.diagrams[0].source).toBe(
         'flowchart LR\n  Idea --> Build --> Ship',
       );
-      expect(screen.getByRole('status')).toHaveTextContent('Saved');
+      expect(screen.getByRole('status', { name: 'Save status' }))
+        .toHaveTextContent('Saved');
     });
     expect(
       await screen.findByTestId('mermaid-preview'),
     ).toContainHTML('Rendered diagram');
+  });
+
+  it('collapses source into a rail and restores the unchanged draft', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [diagram],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    const source = screen.getByLabelText('Mermaid source');
+    fireEvent.change(source, {
+      target: { value: 'flowchart LR\n  Draft --> Preserved' },
+    });
+    await user.click(screen.getByRole('button', { name: 'Collapse source' }));
+
+    const expand = screen.getByRole('button', { name: 'Expand source' });
+    expect(expand).toHaveFocus();
+    expect(screen.queryByLabelText('Mermaid source')).not.toBeInTheDocument();
+
+    await user.click(expand);
+    expect(screen.getByRole('button', { name: 'Collapse source' })).toHaveFocus();
+    expect(screen.getByLabelText('Mermaid source')).toHaveValue(
+      'flowchart LR\n  Draft --> Preserved',
+    );
+  });
+
+  it('shows a source error marker while collapsed', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [diagram],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    const preview = await screen.findByTestId('mermaid-preview');
+    await waitFor(() => expect(preview).toContainHTML('Idea --&gt; Ship'));
+    fireEvent.change(screen.getByLabelText('Mermaid source'), {
+      target: { value: 'flowchart LR\n  Idea --> broken[' },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Parse error near broken',
+      ),
+    );
+    await user.click(screen.getByRole('button', { name: 'Collapse source' }));
+
+    expect(screen.getByText('Source has a syntax error')).toBeInTheDocument();
+    expect(preview).toContainHTML('Idea --&gt; Ship');
   });
 
   it('preserves the last valid preview and does not save invalid source', async () => {
@@ -292,7 +345,8 @@ describe('App', () => {
     });
     await user.click(await screen.findByRole('button', { name: 'Retry save' }));
     await waitFor(() =>
-      expect(screen.getByRole('status')).toHaveTextContent('Saved'),
+      expect(screen.getByRole('status', { name: 'Save status' }))
+        .toHaveTextContent('Saved'),
     );
 
     client.conflictNextUpdate = true;
