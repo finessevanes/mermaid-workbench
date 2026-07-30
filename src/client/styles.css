@@ -429,6 +429,8 @@ a { color: inherit; }
   flex: 1;
   overflow: hidden;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
   cursor: grab;
   background:
     linear-gradient(var(--line) 1px, transparent 1px),

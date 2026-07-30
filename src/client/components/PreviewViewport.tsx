@@ -279,6 +279,7 @@ export function PreviewViewport(
     if (event.button !== 0) {
       return;
     }
+    event.preventDefault();
     automaticFitRef.current = false;
     pointerRef.current = {
       pointerId: event.pointerId,
