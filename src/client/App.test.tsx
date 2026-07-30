@@ -23,9 +23,13 @@ vi.mock('./flowchart-import', () => ({
   importMermaidFlowchart: editorDependencies.importMermaidFlowchart,
 }));
 
-vi.mock('./flowchart-layout', () => ({
-  layoutImportedFlowchart: editorDependencies.layoutImportedFlowchart,
-}));
+vi.mock('./flowchart-layout', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./flowchart-layout')>();
+  return {
+    ...actual,
+    layoutImportedFlowchart: editorDependencies.layoutImportedFlowchart,
+  };
+});
 
 vi.mock('./components/FlowchartCanvas', () => ({
   FlowchartCanvas: ({
@@ -437,7 +441,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const client = createMemoryApi({
       projects: [project],
-      diagrams: [diagram],
+      diagrams: [staticDiagram],
     });
     render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
 
@@ -594,7 +598,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const client = createMemoryApi({
       projects: [project],
-      diagrams: [diagram],
+      diagrams: [staticDiagram],
     });
     client.failNextUpdate = true;
     render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
@@ -729,6 +733,104 @@ describe('App', () => {
       JSON.stringify(savedCanvas),
     );
     expect(editorDependencies.layoutImportedFlowchart).not.toHaveBeenCalled();
+  });
+
+  it('replaces only the interactive source form while retaining title, statistics, and source through node movement', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    expect(screen.getByLabelText('Diagram title')).toHaveValue('Release path');
+    expect(screen.getByText('2 lines')).toBeInTheDocument();
+    expect(
+      screen.getByText(`${diagram.source.length} characters`),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Mermaid source')).toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Edit import' }))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Move idea locally' }));
+
+    expect(screen.getByLabelText('Mermaid source')).toHaveValue(diagram.source);
+    expect(client.updateCalls).toBe(0);
+  });
+
+  it('applies staged Mermaid source and reconciled canvas atomically in one save', async () => {
+    const user = userEvent.setup();
+    const stagedSource =
+      'flowchart LR\n  idea[Idea] --> ship[Ship] --> added[Added]';
+    const importedWithAdded = {
+      ...importedGraph,
+      nodes: [
+        ...importedGraph.nodes,
+        { id: 'added', label: 'Added', shape: 'rect' },
+      ],
+      edges: [
+        ...importedGraph.edges,
+        {
+          id: 'edge|ship|added|0',
+          source: 'ship',
+          target: 'added',
+          arrowStart: false,
+          arrowEnd: true,
+          lineStyle: 'solid' as const,
+        },
+      ],
+    };
+    editorDependencies.importMermaidFlowchart.mockResolvedValueOnce({
+      status: 'compatible',
+      graph: importedWithAdded,
+    });
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Edit import' }));
+    fireEvent.change(screen.getByLabelText('Mermaid source'), {
+      target: { value: stagedSource },
+    });
+    await waitFor(
+      () =>
+        expect(screen.getByRole('button', { name: 'Apply import' }))
+          .toBeEnabled(),
+      { timeout: 1000 },
+    );
+    await user.click(screen.getByRole('button', { name: 'Apply import' }));
+
+    await waitFor(() => expect(client.updateCalls).toBe(1));
+    expect(client.updateInputs[0]).toMatchObject({
+      version: 1,
+      source: stagedSource,
+      canvas: {
+        kind: 'flowchart',
+        version: 1,
+        direction: 'LR',
+        nodes: [
+          expect.objectContaining({
+            id: 'idea',
+            position: { x: 10, y: 20 },
+          }),
+          expect.objectContaining({
+            id: 'ship',
+            position: { x: 400, y: 200 },
+          }),
+          expect.objectContaining({ id: 'added' }),
+        ],
+      },
+    });
+    expect(client.diagrams[0]).toMatchObject({
+      source: stagedSource,
+      canvas: client.updateInputs[0]?.canvas,
+    });
+    expect(screen.getByLabelText('Mermaid source')).toHaveValue(stagedSource);
+    expect(screen.getByLabelText('Mermaid source')).toHaveAttribute('readonly');
   });
 
   it('cancels reset without changing positions, then confirms automatic layout, fits, and saves once', async () => {
@@ -1053,9 +1155,17 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
     await user.click(screen.getByRole('button', { name: 'Reset layout' }));
+    await user.click(screen.getByRole('button', { name: 'Edit import' }));
     fireEvent.change(screen.getByLabelText('Mermaid source'), {
       target: { value: 'flowchart LR\n  Changed --> Ship' },
     });
+    await waitFor(
+      () =>
+        expect(screen.getByRole('button', { name: 'Apply import' }))
+          .toBeEnabled(),
+      { timeout: 1000 },
+    );
+    await user.click(screen.getByRole('button', { name: 'Apply import' }));
     resetImport.resolve({ status: 'compatible', graph: importedGraph });
     await act(async () => {
       await resetImport.promise;

@@ -30,6 +30,7 @@ import {
 } from '../use-mermaid-preview';
 import { Dialog } from './Dialog';
 import { FlowchartCanvas } from './FlowchartCanvas';
+import { MermaidImportPanel } from './MermaidImportPanel';
 import { PreviewViewport } from './PreviewViewport';
 
 interface EditorViewProps {
@@ -485,6 +486,24 @@ export function EditorView({
     transitionSaveState({ type: 'EDITED' });
   };
 
+  const applyMermaidImport = ({
+    source,
+    canvas,
+  }: {
+    source: string;
+    canvas: FlowchartCanvasV1;
+  }) => {
+    presentationOperationRef.current += 1;
+    replaceDraft({ ...draftRef.current, source, canvas });
+    setPresentation({
+      mode: 'interactive',
+      canvas,
+      transient: false,
+    });
+    editGenerationRef.current += 1;
+    transitionSaveState({ type: 'EDITED' });
+  };
+
   const resetLayout = async () => {
     if (
       !window.confirm(
@@ -661,16 +680,25 @@ export function EditorView({
                     }
                   />
                 </label>
-                <label className="source-editor">
-                  <span>Mermaid source</span>
-                  <textarea
-                    value={draft.source}
-                    spellCheck={false}
-                    onChange={(event) =>
-                      updateDraft({ source: event.currentTarget.value })
-                    }
+                {presentation.mode === 'interactive' ? (
+                  <MermaidImportPanel
+                    key={diagram.id}
+                    source={draft.source}
+                    canvas={presentation.canvas}
+                    onApply={applyMermaidImport}
                   />
-                </label>
+                ) : (
+                  <label className="source-editor">
+                    <span>Mermaid source</span>
+                    <textarea
+                      value={draft.source}
+                      spellCheck={false}
+                      onChange={(event) =>
+                        updateDraft({ source: event.currentTarget.value })
+                      }
+                    />
+                  </label>
+                )}
               </div>
               <footer className="source-footer">
                 <span>{draft.source.split('\n').length} lines</span>
