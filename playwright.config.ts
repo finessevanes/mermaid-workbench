@@ -19,13 +19,4 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:5173',
     trace: 'retain-on-failure',
   },
-  webServer: {
-    command: 'npm run dev:e2e',
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: false,
-    timeout: 120_000,
-    env: {
-      MERMAID_WORKBENCH_DATA_DIR: e2eDataDirectory,
-    },
-  },
 });
