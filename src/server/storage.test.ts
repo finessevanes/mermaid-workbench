@@ -1,13 +1,67 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LibraryBackupV1 } from '@shared/types';
+import type { FlowchartCanvasV1 } from '@shared/flowchart-canvas-schema';
 import {
   InvalidBackupError,
   VersionConflictError,
   WorkbenchStore,
 } from './storage';
+
+const validCanvas = {
+  kind: 'flowchart',
+  version: 1,
+  direction: 'LR',
+  nodes: [
+    {
+      id: 'idea',
+      label: 'Idea',
+      shape: 'rect',
+      position: { x: 120, y: 80 },
+    },
+    {
+      id: 'ship',
+      label: 'Ship',
+      shape: 'rect',
+      position: { x: 360, y: 80 },
+    },
+  ],
+  edges: [
+    {
+      id: 'idea-to-ship',
+      source: 'idea',
+      target: 'ship',
+      arrowStart: false,
+      arrowEnd: true,
+      lineStyle: 'solid',
+    },
+  ],
+} satisfies FlowchartCanvasV1;
+
+function createLegacyDatabase(databasePath: string): void {
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE diagrams (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      source TEXT NOT NULL,
+      version INTEGER NOT NULL CHECK (version > 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+  `);
+  legacy.close();
+}
 
 describe('WorkbenchStore', () => {
   let directory: string;
@@ -89,6 +143,72 @@ describe('WorkbenchStore', () => {
       deletedDiagramId: updated.id,
     });
     expect(store.listLibrary().diagrams).toEqual([duplicate]);
+  });
+
+  it('migrates a legacy database once and exposes legacy diagrams without a canvas', () => {
+    store.close();
+    const databasePath = path.join(directory, 'legacy.sqlite3');
+    createLegacyDatabase(databasePath);
+    const timestamp = new Date().toISOString();
+    const legacy = new DatabaseSync(databasePath);
+    const projectId = crypto.randomUUID();
+    const diagramId = crypto.randomUUID();
+    legacy
+      .prepare(
+        'INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      )
+      .run(projectId, 'Legacy', timestamp, timestamp);
+    legacy
+      .prepare(
+        'INSERT INTO diagrams (id, project_id, title, source, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(diagramId, projectId, 'Legacy diagram', 'flowchart LR', 1, timestamp, timestamp);
+    legacy.close();
+
+    store = new WorkbenchStore(databasePath);
+    expect(store.getDiagram(diagramId)).toMatchObject({ canvas: null });
+    store.close();
+    store = new WorkbenchStore(databasePath);
+    expect(store.getDiagram(diagramId)).toMatchObject({ canvas: null });
+  });
+
+  it('persists canvas updates, duplicates canvas, and rejects invalid or stale canvas writes', () => {
+    const project = store.createProject({ name: 'Canvas maps' });
+    const created = store.createDiagram({
+      projectId: project.id,
+      title: 'Canvas diagram',
+      source: 'flowchart LR\n  Idea --> Ship',
+    });
+    expect(created.canvas).toBeNull();
+
+    const updated = store.updateDiagram(created.id, {
+      canvas: validCanvas,
+      version: created.version,
+    });
+    expect(updated).toMatchObject({ canvas: validCanvas, version: 2 });
+    expect(store.duplicateDiagram(updated.id)).toMatchObject({
+      canvas: validCanvas,
+      version: 1,
+    });
+
+    const beforeInvalid = store.getDiagram(created.id);
+    expect(() =>
+      store.updateDiagram(created.id, {
+        canvas: {
+          ...validCanvas,
+          edges: [{ ...validCanvas.edges[0], target: 'missing' }],
+        },
+        version: updated.version,
+      }),
+    ).toThrow();
+    expect(store.getDiagram(created.id)).toEqual(beforeInvalid);
+
+    expect(() =>
+      store.updateDiagram(created.id, {
+        canvas: validCanvas,
+        version: created.version,
+      }),
+    ).toThrow(VersionConflictError);
   });
 
   it('deletes only the selected project and reports its cascade size', () => {
@@ -192,7 +312,7 @@ describe('WorkbenchStore', () => {
     const backup = store.exportBackup();
     expect(backup).toEqual({
       format: 'mermaid-workbench-backup',
-      version: 1,
+      version: 2,
       exportedAt: expect.any(String),
       projects: [storedProject],
       diagrams: [diagram],
@@ -204,6 +324,68 @@ describe('WorkbenchStore', () => {
       projects: backup.projects,
       diagrams: backup.diagrams,
     });
+  });
+
+  it('exports V2 backups, restores literal V1 backups, and preserves data after an invalid V2 backup', () => {
+    const project = store.createProject({ name: 'Canvas backups' });
+    const diagram = store.createDiagram({
+      projectId: project.id,
+      title: 'Canvas diagram',
+      source: 'flowchart LR\n  Idea --> Ship',
+    });
+    const withCanvas = store.updateDiagram(diagram.id, {
+      canvas: validCanvas,
+      version: diagram.version,
+    });
+
+    expect(store.exportBackup()).toMatchObject({
+      format: 'mermaid-workbench-backup',
+      version: 2,
+    });
+
+    const v1Backup = {
+      format: 'mermaid-workbench-backup',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      projects: [project],
+      diagrams: [
+        {
+          id: withCanvas.id,
+          projectId: withCanvas.projectId,
+          title: withCanvas.title,
+          source: withCanvas.source,
+          version: withCanvas.version,
+          createdAt: withCanvas.createdAt,
+          updatedAt: withCanvas.updatedAt,
+        },
+      ],
+    };
+    store.restoreBackup(v1Backup);
+    expect(store.getDiagram(withCanvas.id)).toMatchObject({ canvas: null });
+
+    const v2Backup = {
+      ...store.exportBackup(),
+      diagrams: [{ ...withCanvas, canvas: validCanvas }],
+    };
+    store.restoreBackup(v2Backup);
+    expect(store.getDiagram(withCanvas.id)).toMatchObject({ canvas: validCanvas });
+
+    const beforeInvalid = store.listLibrary();
+    expect(() =>
+      store.restoreBackup({
+        ...v2Backup,
+        diagrams: [
+          {
+            ...withCanvas,
+            canvas: {
+              ...validCanvas,
+              edges: [{ ...validCanvas.edges[0], source: 'missing' }],
+            },
+          },
+        ],
+      }),
+    ).toThrow(InvalidBackupError);
+    expect(store.listLibrary()).toEqual(beforeInvalid);
   });
 
   it('rejects an invalid backup before changing stored data', () => {
@@ -219,7 +401,17 @@ describe('WorkbenchStore', () => {
       version: 1,
       exportedAt: new Date().toISOString(),
       projects: [],
-      diagrams: [{ ...diagram, projectId: crypto.randomUUID() }],
+      diagrams: [
+        {
+          id: diagram.id,
+          projectId: crypto.randomUUID(),
+          title: diagram.title,
+          source: diagram.source,
+          version: diagram.version,
+          createdAt: diagram.createdAt,
+          updatedAt: diagram.updatedAt,
+        },
+      ],
     };
 
     expect(() => store.restoreBackup(invalidBackup)).toThrow(

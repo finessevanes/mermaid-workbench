@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type {
   ConflictDetails,
   DiagramRecord,
-  LibraryBackupV1,
+  LibraryBackup,
   ProjectRecord,
 } from '@shared/types';
 import { ApiClientError, type WorkbenchApi } from './api';
@@ -84,6 +84,7 @@ function createMemoryApi(initial?: {
         projectId,
         title,
         source,
+        canvas: null,
         version: 1,
         createdAt: now,
         updatedAt: now,
@@ -98,6 +99,7 @@ function createMemoryApi(initial?: {
       input: {
         title?: string;
         source?: string;
+        canvas?: DiagramRecord['canvas'];
         version: number;
         force?: boolean;
       },
@@ -135,6 +137,7 @@ function createMemoryApi(initial?: {
         ...current,
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(input.source === undefined ? {} : { source: input.source }),
+        ...(input.canvas === undefined ? {} : { canvas: input.canvas }),
         version: current.version + 1,
         updatedAt: now,
       };
@@ -162,9 +165,11 @@ function createMemoryApi(initial?: {
     },
     exportDiagramUrl: (id: string) => `/api/diagrams/${id}/export`,
     exportBackupUrl: () => '/api/backup',
-    restoreBackup: async (backup: LibraryBackupV1) => {
+    restoreBackup: async (backup: LibraryBackup) => {
       state.projects = [...backup.projects];
-      state.diagrams = [...backup.diagrams];
+      state.diagrams = backup.version === 1
+        ? backup.diagrams.map((diagram) => ({ ...diagram, canvas: null }))
+        : [...backup.diagrams];
       return { restored: true as const };
     },
   });
@@ -182,6 +187,7 @@ const diagram: DiagramRecord = {
   projectId: project.id,
   title: 'Release path',
   source: 'flowchart LR\n  Idea --> Ship',
+  canvas: null,
   version: 1,
   createdAt: '2026-07-29T12:00:00.000Z',
   updatedAt: '2026-07-29T12:00:00.000Z',

@@ -1,7 +1,7 @@
 import type {
   ApiErrorBody,
   DiagramRecord,
-  LibraryBackupV1,
+  LibraryBackup,
   LibraryIndex,
   ProjectRecord,
 } from '@shared/types';
@@ -97,6 +97,7 @@ export const api = {
     input: {
       title?: string;
       source?: string;
+      canvas?: import('@shared/flowchart-canvas-schema').FlowchartCanvasV1 | null;
       version: number;
       force?: boolean;
     },
@@ -119,7 +120,7 @@ export const api = {
   exportDiagramUrl: (id: string) => `/api/diagrams/${id}/export`,
   exportBackupUrl: () => '/api/backup',
 
-  restoreBackup: (backup: LibraryBackupV1) =>
+  restoreBackup: (backup: LibraryBackup) =>
     requestJson<{ restored: true }>('/api/backup/restore', {
       method: 'POST',
       body: JSON.stringify({ confirmReplace: true, backup }),

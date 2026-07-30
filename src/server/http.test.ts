@@ -7,12 +7,43 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type {
   ApiErrorBody,
   DiagramRecord,
-  LibraryBackupV1,
+  LibraryBackupV2,
   LibraryIndex,
   ProjectRecord,
 } from '@shared/types';
+import type { FlowchartCanvasV1 } from '@shared/flowchart-canvas-schema';
 import { createWorkbenchServer } from './http';
 import { WorkbenchStore } from './storage';
+
+const validCanvas = {
+  kind: 'flowchart',
+  version: 1,
+  direction: 'LR',
+  nodes: [
+    {
+      id: 'idea',
+      label: 'Idea',
+      shape: 'rect',
+      position: { x: 120, y: 80 },
+    },
+    {
+      id: 'ship',
+      label: 'Ship',
+      shape: 'rect',
+      position: { x: 360, y: 80 },
+    },
+  ],
+  edges: [
+    {
+      id: 'idea-to-ship',
+      source: 'idea',
+      target: 'ship',
+      arrowStart: false,
+      arrowEnd: true,
+      lineStyle: 'solid',
+    },
+  ],
+} satisfies FlowchartCanvasV1;
 
 interface ResponseSnapshot<T = unknown> {
   status: number;
@@ -247,6 +278,47 @@ describe('local HTTP API', () => {
     });
   });
 
+  it('updates canvas documents and rejects malformed canvas JSON payloads', async () => {
+    const project = store.createProject({ name: 'Canvas maps' });
+    const diagram = store.createDiagram({
+      projectId: project.id,
+      title: 'Canvas diagram',
+      source: 'flowchart LR\n  Idea --> Ship',
+    });
+
+    expect(
+      await request<DiagramRecord>('PUT', `/api/diagrams/${diagram.id}`, {
+        canvas: validCanvas,
+        version: 1,
+      }),
+    ).toMatchObject({ status: 200, body: { canvas: validCanvas, version: 2 } });
+
+    expect(
+      await request<ApiErrorBody>('PUT', `/api/diagrams/${diagram.id}`, {
+        canvas: {
+          ...validCanvas,
+          nodes: [
+            {
+              ...validCanvas.nodes[0],
+              position: { x: 'not-a-number', y: 80 },
+            },
+          ],
+        },
+        version: 2,
+      }),
+    ).toMatchObject({ status: 400, body: { error: { code: 'INVALID_REQUEST' } } });
+
+    expect(
+      await request<ApiErrorBody>('PUT', `/api/diagrams/${diagram.id}`, {
+        canvas: {
+          ...validCanvas,
+          edges: [{ ...validCanvas.edges[0], target: 'missing' }],
+        },
+        version: 2,
+      }),
+    ).toMatchObject({ status: 400, body: { error: { code: 'INVALID_REQUEST' } } });
+  });
+
   it('exports safe filenames and restores backups only with confirmation', async () => {
     const project = store.createProject({ name: 'Launch maps' });
     const diagram = store.createDiagram({
@@ -267,7 +339,7 @@ describe('local HTTP API', () => {
       'attachment; filename="Release-path.mmd"',
     );
 
-    const backupResponse = await request<LibraryBackupV1>(
+    const backupResponse = await request<LibraryBackupV2>(
       'GET',
       '/api/backup',
     );
@@ -275,7 +347,7 @@ describe('local HTTP API', () => {
       status: 200,
       body: {
         format: 'mermaid-workbench-backup',
-        version: 1,
+        version: 2,
       },
     });
 

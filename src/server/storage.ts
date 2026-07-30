@@ -2,10 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type {
   DiagramRecord,
-  LibraryBackupV1,
+  LibraryBackup,
+  LibraryBackupV2,
   LibraryIndex,
   ProjectRecord,
 } from '@shared/types';
+import {
+  validateFlowchartCanvas,
+  type FlowchartCanvasV1,
+} from '@shared/flowchart-canvas-schema';
 import {
   backupSchema,
   diagramInputSchema,
@@ -26,6 +31,7 @@ interface DiagramRow {
   project_id: string;
   title: string;
   source: string;
+  canvas_json: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -76,6 +82,10 @@ function toDiagram(row: DiagramRow): DiagramRecord {
     projectId: row.project_id,
     title: row.title,
     source: row.source,
+    canvas:
+      row.canvas_json === null
+        ? null
+        : validateFlowchartCanvas(JSON.parse(row.canvas_json)),
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -126,6 +136,12 @@ export class WorkbenchStore {
       CREATE INDEX IF NOT EXISTS diagrams_project_id
       ON diagrams(project_id);
     `);
+    const diagramColumns = this.database
+      .prepare('PRAGMA table_info(diagrams)')
+      .all() as Array<{ name: string }>;
+    if (!diagramColumns.some((column) => column.name === 'canvas_json')) {
+      this.database.exec('ALTER TABLE diagrams ADD COLUMN canvas_json TEXT;');
+    }
   }
 
   close(): void {
@@ -142,7 +158,7 @@ export class WorkbenchStore {
       .all() as unknown as ProjectRow[];
     const diagramRows = this.database
       .prepare(
-        `SELECT id, project_id, title, source, version, created_at, updated_at
+        `SELECT id, project_id, title, source, canvas_json, version, created_at, updated_at
          FROM diagrams
          ORDER BY rowid ASC`,
       )
@@ -218,39 +234,13 @@ export class WorkbenchStore {
   }): DiagramRecord {
     const parsed = diagramInputSchema.parse(input);
     this.getProject(parsed.projectId);
-    const timestamp = new Date().toISOString();
-    const diagram: DiagramRecord = {
-      id: randomUUID(),
-      projectId: parsed.projectId,
-      title: parsed.title,
-      source: parsed.source,
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    this.database
-      .prepare(
-        `INSERT INTO diagrams
-          (id, project_id, title, source, version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        diagram.id,
-        diagram.projectId,
-        diagram.title,
-        diagram.source,
-        diagram.version,
-        diagram.createdAt,
-        diagram.updatedAt,
-      );
-    this.touchProject(parsed.projectId, timestamp);
-    return diagram;
+    return this.insertDiagram(parsed);
   }
 
   getDiagram(id: string): DiagramRecord {
     const row = this.database
       .prepare(
-        `SELECT id, project_id, title, source, version, created_at, updated_at
+        `SELECT id, project_id, title, source, canvas_json, version, created_at, updated_at
          FROM diagrams
          WHERE id = ?`,
       )
@@ -266,6 +256,7 @@ export class WorkbenchStore {
     input: {
       title?: string;
       source?: string;
+      canvas?: FlowchartCanvasV1 | null;
       version: number;
       force?: boolean;
     },
@@ -276,6 +267,7 @@ export class WorkbenchStore {
       ...current,
       title: parsed.title ?? current.title,
       source: parsed.source ?? current.source,
+      canvas: parsed.canvas === undefined ? current.canvas : parsed.canvas,
       version: parsed.version,
     };
     if (!parsed.force && parsed.version !== current.version) {
@@ -287,12 +279,13 @@ export class WorkbenchStore {
     this.database
       .prepare(
         `UPDATE diagrams
-         SET title = ?, source = ?, version = ?, updated_at = ?
+         SET title = ?, source = ?, canvas_json = ?, version = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         submitted.title,
         submitted.source,
+        submitted.canvas === null ? null : JSON.stringify(submitted.canvas),
         nextVersion,
         updatedAt,
         id,
@@ -303,10 +296,11 @@ export class WorkbenchStore {
 
   duplicateDiagram(id: string): DiagramRecord {
     const source = this.getDiagram(id);
-    return this.createDiagram({
+    return this.insertDiagram({
       projectId: source.projectId,
       title: `${source.title} copy`,
       source: source.source,
+      canvas: source.canvas,
     });
   }
 
@@ -317,10 +311,10 @@ export class WorkbenchStore {
     return { deletedDiagramId: id };
   }
 
-  exportBackup(): LibraryBackupV1 {
+  exportBackup(): LibraryBackupV2 {
     return {
       format: 'mermaid-workbench-backup',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       ...this.listLibrary(),
     };
@@ -335,7 +329,7 @@ export class WorkbenchStore {
       );
     }
 
-    const backup = parsed.data;
+    const backup: LibraryBackup = parsed.data;
     assertUniqueIds(backup.projects, 'project');
     assertUniqueIds(backup.diagrams, 'diagram');
     const projectIds = new Set(backup.projects.map((project) => project.id));
@@ -349,6 +343,11 @@ export class WorkbenchStore {
       );
     }
 
+    const diagrams =
+      backup.version === 1
+        ? backup.diagrams.map((diagram) => ({ ...diagram, canvas: null }))
+        : backup.diagrams;
+
     this.database.exec('BEGIN IMMEDIATE;');
     try {
       this.database.exec('DELETE FROM diagrams; DELETE FROM projects;');
@@ -358,8 +357,8 @@ export class WorkbenchStore {
       );
       const insertDiagram = this.database.prepare(
         `INSERT INTO diagrams
-          (id, project_id, title, source, version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          (id, project_id, title, source, canvas_json, version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       );
 
       for (const project of backup.projects) {
@@ -370,12 +369,13 @@ export class WorkbenchStore {
           project.updatedAt,
         );
       }
-      for (const diagram of backup.diagrams) {
+      for (const diagram of diagrams) {
         insertDiagram.run(
           diagram.id,
           diagram.projectId,
           diagram.title,
           diagram.source,
+          diagram.canvas === null ? null : JSON.stringify(diagram.canvas),
           diagram.version,
           diagram.createdAt,
           diagram.updatedAt,
@@ -403,6 +403,43 @@ export class WorkbenchStore {
       throw new RecordNotFoundError('project', id);
     }
     return toProject(row);
+  }
+
+  private insertDiagram(input: {
+    projectId: string;
+    title: string;
+    source: string;
+    canvas?: FlowchartCanvasV1 | null;
+  }): DiagramRecord {
+    const timestamp = new Date().toISOString();
+    const diagram: DiagramRecord = {
+      id: randomUUID(),
+      projectId: input.projectId,
+      title: input.title,
+      source: input.source,
+      canvas: input.canvas ?? null,
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.database
+      .prepare(
+        `INSERT INTO diagrams
+          (id, project_id, title, source, canvas_json, version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        diagram.id,
+        diagram.projectId,
+        diagram.title,
+        diagram.source,
+        diagram.canvas === null ? null : JSON.stringify(diagram.canvas),
+        diagram.version,
+        diagram.createdAt,
+        diagram.updatedAt,
+      );
+    this.touchProject(input.projectId, timestamp);
+    return diagram;
   }
 
   private touchProject(projectId: string, updatedAt: string): void {
