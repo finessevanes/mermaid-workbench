@@ -2,10 +2,11 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreviewViewport } from './PreviewViewport';
 
 let resizeCallback: ResizeObserverCallback;
+const originalClipboard = navigator.clipboard;
 
 class TestResizeObserver implements ResizeObserver {
   constructor(callback: ResizeObserverCallback) {
@@ -76,6 +77,13 @@ function renderViewport(bounds = { left: 0, top: 0 }) {
 describe('PreviewViewport', () => {
   beforeEach(() => {
     globalThis.ResizeObserver = TestResizeObserver;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: originalClipboard,
+    });
   });
 
   it('fits valid SVG content and exposes accessible controls', () => {
@@ -261,6 +269,33 @@ describe('PreviewViewport', () => {
     );
     expect(layer.style.transform).toBe(manualTransform);
     expect(screen.getByRole('alert')).toHaveTextContent('Parse error');
+  });
+
+  it('copies the exact Mermaid syntax error for external troubleshooting', async () => {
+    const user = userEvent.setup();
+    const syntaxError =
+      "Parse error on line 5: Expecting 'SEMI', 'NEWLINE', got 'NODE_STRING'";
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(
+      <PreviewViewport
+        svg={svg}
+        rendering={false}
+        error={syntaxError}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole('button', { name: 'Copy Mermaid syntax error' }),
+    );
+
+    expect(writeText).toHaveBeenCalledWith(syntaxError);
+    expect(screen.getByRole('button', { name: 'Copy Mermaid syntax error' }))
+      .toHaveTextContent('Copied');
   });
 
   it('does not refit replacement SVG content from an initial observer notification', () => {
