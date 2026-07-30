@@ -2,7 +2,7 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreviewViewport } from './PreviewViewport';
 
 let resizeCallback: ResizeObserverCallback;
@@ -150,6 +150,62 @@ describe('PreviewViewport', () => {
     );
     expect(layer.style.transform).toBe(manualTransform);
     expect(screen.getByRole('alert')).toHaveTextContent('Parse error');
+  });
+
+  it('does not refit replacement SVG content from an initial observer notification', () => {
+    const result = renderViewport();
+    const layer = screen.getByTestId('preview-transform');
+    const initialTransform = layer.style.transform;
+
+    result.rerender(
+      <PreviewViewport
+        svg={'<svg viewBox="0 0 800 500"></svg>'}
+        rendering={false}
+        error={null}
+      />,
+    );
+    act(() => {
+      resizeCallback([], {} as ResizeObserver);
+    });
+
+    expect(layer.style.transform).toBe(initialTransform);
+  });
+
+  it('releases active pointer capture during unmount', () => {
+    const result = renderViewport();
+    const region = screen.getByRole('region', { name: 'Diagram preview' });
+    let capturedPointerId: number | null = null;
+    const setPointerCapture = vi.fn((pointerId: number) => {
+      capturedPointerId = pointerId;
+    });
+    const hasPointerCapture = vi.fn(
+      (pointerId: number) => capturedPointerId === pointerId,
+    );
+    const releasePointerCapture = vi.fn((pointerId: number) => {
+      capturedPointerId = null;
+      return pointerId;
+    });
+    Object.defineProperties(region, {
+      setPointerCapture: { configurable: true, value: setPointerCapture },
+      hasPointerCapture: { configurable: true, value: hasPointerCapture },
+      releasePointerCapture: {
+        configurable: true,
+        value: releasePointerCapture,
+      },
+    });
+
+    const pointerDown = new MouseEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      clientX: 200,
+      clientY: 200,
+    });
+    Object.defineProperty(pointerDown, 'pointerId', { value: 9 });
+    fireEvent(region, pointerDown);
+    result.unmount();
+
+    expect(setPointerCapture).toHaveBeenCalledWith(9);
+    expect(releasePointerCapture).toHaveBeenCalledWith(9);
   });
 
   it('refits on resize only while automatic fit mode is active', async () => {

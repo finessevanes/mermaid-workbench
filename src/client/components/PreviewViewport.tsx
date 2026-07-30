@@ -54,6 +54,20 @@ function viewportSize(element: HTMLDivElement): ViewportSize {
   return { width: bounds.width, height: bounds.height };
 }
 
+function releasePointerCapture(
+  viewport: HTMLDivElement | null,
+  pointerId: number,
+) {
+  if (
+    viewport &&
+    typeof viewport.hasPointerCapture === 'function' &&
+    viewport.hasPointerCapture(pointerId) &&
+    typeof viewport.releasePointerCapture === 'function'
+  ) {
+    viewport.releasePointerCapture(pointerId);
+  }
+}
+
 export function PreviewViewport(
   props: PreviewViewportProps,
 ): React.JSX.Element {
@@ -68,9 +82,12 @@ export function PreviewViewport(
   const canvasRef = useRef<HTMLDivElement>(null);
   const automaticFitRef = useRef(true);
   const initialFitRef = useRef(false);
+  const contentSizeRef = useRef<ViewportSize | null>(null);
+  const fittedViewportSizeRef = useRef<ViewportSize | null>(null);
   const pointerRef = useRef<{ pointerId: number; x: number; y: number } | null>(
     null,
   );
+  const pointerCaptureViewportRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -93,29 +110,52 @@ export function PreviewViewport(
   }, [props.svg]);
 
   useEffect(() => {
+    contentSizeRef.current = contentSize;
     const viewport = viewportRef.current;
-    if (!viewport || !contentSize || typeof ResizeObserver === 'undefined') {
+    if (!viewport || !contentSize || initialFitRef.current) {
+      return;
+    }
+    const size = viewportSize(viewport);
+    const fitted = fitViewport(size, contentSize);
+    if (fitted) {
+      setTransform(fitted);
+      initialFitRef.current = true;
+      fittedViewportSizeRef.current = size;
+    }
+  }, [contentSize]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || typeof ResizeObserver === 'undefined') {
       return;
     }
 
     const applyFit = () => {
-      if (!automaticFitRef.current) {
+      const contentSize = contentSizeRef.current;
+      if (!automaticFitRef.current || !contentSize) {
         return;
       }
-      const fitted = fitViewport(viewportSize(viewport), contentSize);
+      const size = viewportSize(viewport);
+      const previousSize = fittedViewportSizeRef.current;
+      if (
+        initialFitRef.current &&
+        previousSize?.width === size.width &&
+        previousSize.height === size.height
+      ) {
+        return;
+      }
+      const fitted = fitViewport(size, contentSize);
       if (fitted) {
         setTransform(fitted);
         initialFitRef.current = true;
+        fittedViewportSizeRef.current = size;
       }
     };
 
     const observer = new ResizeObserver(applyFit);
     observer.observe(viewport);
-    if (!initialFitRef.current) {
-      applyFit();
-    }
     return () => observer.disconnect();
-  }, [contentSize]);
+  }, []);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -147,7 +187,13 @@ export function PreviewViewport(
   }, []);
 
   useEffect(() => () => {
+    const activePointer = pointerRef.current;
+    const pointerViewport = pointerCaptureViewportRef.current;
     pointerRef.current = null;
+    pointerCaptureViewportRef.current = null;
+    if (activePointer) {
+      releasePointerCapture(pointerViewport, activePointer.pointerId);
+    }
   }, []);
 
   const zoomFromCenter = (requestedScale: number) => {
@@ -175,6 +221,7 @@ export function PreviewViewport(
       setTransform(fitted);
       automaticFitRef.current = true;
       initialFitRef.current = true;
+      fittedViewportSizeRef.current = viewportSize(viewport);
     }
   };
 
@@ -199,17 +246,11 @@ export function PreviewViewport(
     if (!activePointer || (event && event.pointerId !== activePointer.pointerId)) {
       return;
     }
-    const viewport = event?.currentTarget;
+    const viewport = event?.currentTarget ?? pointerCaptureViewportRef.current;
     pointerRef.current = null;
+    pointerCaptureViewportRef.current = null;
     setDragging(false);
-    if (
-      viewport &&
-      typeof viewport.hasPointerCapture === 'function' &&
-      viewport.hasPointerCapture(activePointer.pointerId) &&
-      typeof viewport.releasePointerCapture === 'function'
-    ) {
-      viewport.releasePointerCapture(activePointer.pointerId);
-    }
+    releasePointerCapture(viewport, activePointer.pointerId);
   };
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -222,6 +263,7 @@ export function PreviewViewport(
       x: event.clientX,
       y: event.clientY,
     };
+    pointerCaptureViewportRef.current = event.currentTarget;
     if (typeof event.currentTarget.setPointerCapture === 'function') {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
