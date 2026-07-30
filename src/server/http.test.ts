@@ -302,6 +302,7 @@ describe('local HTTP API', () => {
               ...validCanvas.nodes[0],
               position: { x: 'not-a-number', y: 80 },
             },
+            validCanvas.nodes[1],
           ],
         },
         version: 2,

@@ -172,7 +172,7 @@ describe('WorkbenchStore', () => {
     expect(store.getDiagram(diagramId)).toMatchObject({ canvas: null });
   });
 
-  it('persists canvas updates, duplicates canvas, and rejects invalid or stale canvas writes', () => {
+  it('persists canvas updates, preserves canvas on omitted updates, clears null canvas, and rejects invalid or stale writes', () => {
     const project = store.createProject({ name: 'Canvas maps' });
     const created = store.createDiagram({
       projectId: project.id,
@@ -186,9 +186,30 @@ describe('WorkbenchStore', () => {
       version: created.version,
     });
     expect(updated).toMatchObject({ canvas: validCanvas, version: 2 });
-    expect(store.duplicateDiagram(updated.id)).toMatchObject({
+    expect(updated.source).toBe(created.source);
+
+    const omittedCanvas = store.updateDiagram(created.id, {
+      title: 'Canvas diagram revised',
+      version: updated.version,
+    });
+    expect(omittedCanvas).toMatchObject({
+      canvas: validCanvas,
+      source: created.source,
+      version: 3,
+    });
+    expect(store.duplicateDiagram(omittedCanvas.id)).toMatchObject({
       canvas: validCanvas,
       version: 1,
+    });
+
+    const clearedCanvas = store.updateDiagram(created.id, {
+      canvas: null,
+      version: omittedCanvas.version,
+    });
+    expect(clearedCanvas).toMatchObject({
+      canvas: null,
+      source: created.source,
+      version: 4,
     });
 
     const beforeInvalid = store.getDiagram(created.id);
@@ -198,7 +219,7 @@ describe('WorkbenchStore', () => {
           ...validCanvas,
           edges: [{ ...validCanvas.edges[0], target: 'missing' }],
         },
-        version: updated.version,
+        version: clearedCanvas.version,
       }),
     ).toThrow();
     expect(store.getDiagram(created.id)).toEqual(beforeInvalid);
