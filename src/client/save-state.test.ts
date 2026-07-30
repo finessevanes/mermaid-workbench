@@ -39,4 +39,27 @@ describe('saveStateReducer', () => {
       ),
     ).toEqual({ status: 'dirty' });
   });
+
+  it('routes a committed canvas edit through the existing retry lifecycle', () => {
+    const dirty = saveStateReducer(
+      { status: 'saved' },
+      { type: 'EDITED' },
+    );
+    const saving = saveStateReducer(dirty, { type: 'SAVE_STARTED' });
+    const failed = saveStateReducer(saving, {
+      type: 'SAVE_FAILED',
+      message: 'Canvas save failed.',
+    });
+
+    expect(failed).toEqual({
+      status: 'failed',
+      message: 'Canvas save failed.',
+    });
+    expect(
+      saveStateReducer(
+        saveStateReducer(failed, { type: 'SAVE_STARTED' }),
+        { type: 'SAVE_SUCCEEDED' },
+      ),
+    ).toEqual({ status: 'saved' });
+  });
 });

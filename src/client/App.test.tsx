@@ -2,16 +2,87 @@
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ConflictDetails,
   DiagramRecord,
   LibraryBackup,
   ProjectRecord,
 } from '@shared/types';
+import type { FlowchartCanvasV1 } from '@shared/flowchart-canvas-schema';
 import { ApiClientError, type WorkbenchApi } from './api';
 import { App } from './App';
 import type { MermaidRenderer } from './use-mermaid-preview';
+
+const editorDependencies = vi.hoisted(() => ({
+  importMermaidFlowchart: vi.fn(),
+  layoutImportedFlowchart: vi.fn(),
+}));
+
+vi.mock('./flowchart-import', () => ({
+  importMermaidFlowchart: editorDependencies.importMermaidFlowchart,
+}));
+
+vi.mock('./flowchart-layout', () => ({
+  layoutImportedFlowchart: editorDependencies.layoutImportedFlowchart,
+}));
+
+vi.mock('./components/FlowchartCanvas', () => ({
+  FlowchartCanvas: ({
+    canvas,
+    sourceLayoutRevision,
+    onCanvasChange,
+    onCommit,
+    onResetLayout,
+  }: {
+    canvas: FlowchartCanvasV1;
+    sourceLayoutRevision?: number;
+    onCanvasChange: (canvas: FlowchartCanvasV1) => void;
+    onCommit: (canvas: FlowchartCanvasV1) => void;
+    onResetLayout: () => void;
+  }) => {
+    const movedCanvas = {
+      ...canvas,
+      nodes: canvas.nodes.map((node, index) => (
+        index === 0
+          ? {
+            ...node,
+            position: {
+              x: node.position.x + 100,
+              y: node.position.y + 50,
+            },
+          }
+          : node
+      )),
+    };
+    return (
+      <section aria-label="Interactive flowchart">
+        <output data-testid="canvas-document">{JSON.stringify(canvas)}</output>
+        <output data-testid="canvas-layout-revision">
+          {sourceLayoutRevision ?? 0}
+        </output>
+        <button
+          type="button"
+          onClick={() => onCanvasChange(movedCanvas)}
+        >
+          Move idea locally
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            onCanvasChange(movedCanvas);
+            onCommit(movedCanvas);
+          }}
+        >
+          Drag idea node
+        </button>
+        <button type="button" onClick={onResetLayout}>
+          Reset layout
+        </button>
+      </section>
+    );
+  },
+}));
 
 const validRenderer: MermaidRenderer = async (source) => {
   if (source.includes('broken[')) {
@@ -29,6 +100,13 @@ function createMemoryApi(initial?: {
   failNextUpdate: boolean;
   conflictNextUpdate: boolean;
   updateCalls: number;
+  updateInputs: Array<{
+    title?: string;
+    source?: string;
+    canvas?: DiagramRecord['canvas'];
+    version: number;
+    force?: boolean;
+  }>;
 } {
   let sequence = 0;
   const now = '2026-07-29T12:00:00.000Z';
@@ -38,6 +116,13 @@ function createMemoryApi(initial?: {
     failNextUpdate: false,
     conflictNextUpdate: false,
     updateCalls: 0,
+    updateInputs: [] as Array<{
+      title?: string;
+      source?: string;
+      canvas?: DiagramRecord['canvas'];
+      version: number;
+      force?: boolean;
+    }>,
   };
   const nextId = () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, '0')}`;
 
@@ -105,6 +190,7 @@ function createMemoryApi(initial?: {
       },
     ) => {
       state.updateCalls += 1;
+      state.updateInputs.push(input);
       const current = state.diagrams.find((diagram) => diagram.id === id)!;
       if (state.failNextUpdate) {
         state.failNextUpdate = false;
@@ -193,8 +279,85 @@ const diagram: DiagramRecord = {
   updatedAt: '2026-07-29T12:00:00.000Z',
 };
 
+const staticDiagram: DiagramRecord = {
+  ...diagram,
+  source: 'flowchart LR\n  subgraph Group\n    Idea --> Ship\n  end',
+};
+
+const importedGraph = {
+  direction: 'LR' as const,
+  nodes: [
+    { id: 'idea', label: 'Idea', shape: 'rect' },
+    { id: 'ship', label: 'Ship', shape: 'rect' },
+  ],
+  edges: [
+    {
+      id: 'edge|idea|ship|0',
+      source: 'idea',
+      target: 'ship',
+      arrowStart: false,
+      arrowEnd: true,
+      lineStyle: 'solid' as const,
+    },
+  ],
+  warnings: [],
+};
+
+function canvasAt(ideaX: number, ideaY: number): FlowchartCanvasV1 {
+  return {
+    kind: 'flowchart',
+    version: 1,
+    direction: 'LR',
+    nodes: [
+      {
+        id: 'idea',
+        label: 'Idea',
+        shape: 'rect',
+        position: { x: ideaX, y: ideaY },
+      },
+      {
+        id: 'ship',
+        label: 'Ship',
+        shape: 'rect',
+        position: { x: 400, y: 200 },
+      },
+    ],
+    edges: importedGraph.edges,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 describe('App', () => {
   beforeEach(() => {
+    editorDependencies.importMermaidFlowchart.mockReset();
+    editorDependencies.layoutImportedFlowchart.mockReset();
+    editorDependencies.importMermaidFlowchart.mockImplementation(
+      async (source: string) => {
+        if (source.startsWith('sequenceDiagram')) {
+          return {
+            status: 'unsupported',
+            reason: 'Only Mermaid flowcharts support interactive mode.',
+          };
+        }
+        if (source.includes('subgraph')) {
+          return {
+            status: 'unsupported',
+            reason: 'Flowchart subgraphs are not supported in interactive mode.',
+          };
+        }
+        return { status: 'compatible', graph: importedGraph };
+      },
+    );
+    editorDependencies.layoutImportedFlowchart.mockImplementation(
+      () => canvasAt(10, 20),
+    );
     HTMLDialogElement.prototype.showModal ??= function showModal() {
       this.setAttribute('open', '');
     };
@@ -232,7 +395,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const client = createMemoryApi({
       projects: [project],
-      diagrams: [diagram],
+      diagrams: [staticDiagram],
     });
     render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
 
@@ -290,7 +453,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const client = createMemoryApi({
       projects: [project],
-      diagrams: [diagram],
+      diagrams: [staticDiagram],
     });
     render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
 
@@ -329,7 +492,7 @@ describe('App', () => {
       const user = userEvent.setup();
       const client = createMemoryApi({
         projects: [project],
-        diagrams: [diagram],
+        diagrams: [staticDiagram],
       });
       render(
         <App
@@ -396,7 +559,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const client = createMemoryApi({
       projects: [project],
-      diagrams: [diagram],
+      diagrams: [staticDiagram],
     });
     render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
 
@@ -451,5 +614,262 @@ describe('App', () => {
     expect(
       screen.getByRole('button', { name: 'Use saved version' }),
     ).toBeInTheDocument();
+  });
+
+  it('imports a compatible legacy flowchart transiently and persists only committed positions with the saved version', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [diagram],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    expect(
+      await screen.findByRole('region', { name: 'Interactive flowchart' }),
+    ).toBeInTheDocument();
+    expect(client.updateCalls).toBe(0);
+
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await waitFor(() => expect(client.updateCalls).toBe(1));
+    expect(client.updateInputs[0]).toMatchObject({
+      version: 1,
+      canvas: canvasAt(110, 70),
+    });
+    expect(client.diagrams[0].canvas).toEqual(canvasAt(110, 70));
+
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await waitFor(() => expect(client.updateCalls).toBe(2));
+    expect(client.updateInputs[1]).toMatchObject({
+      version: 2,
+      canvas: canvasAt(210, 120),
+    });
+  });
+
+  it('keeps in-progress canvas movement local until the canvas commits', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Move idea locally' }));
+    expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(canvasAt(110, 70)),
+    );
+    expect(screen.getByRole('status', { name: 'Save status' }))
+      .toHaveTextContent('Saved');
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    expect(client.updateCalls).toBe(0);
+  });
+
+  it.each([
+    {
+      name: 'sequence diagram',
+      source: 'sequenceDiagram\n  Alice->>Bob: Hello',
+      reason: 'Only Mermaid flowcharts support interactive mode.',
+    },
+    {
+      name: 'subgraph flowchart',
+      source: 'flowchart LR\n  subgraph Group\n    Idea --> Ship\n  end',
+      reason: 'Flowchart subgraphs are not supported in interactive mode.',
+    },
+  ])('keeps the static source and preview for an unsupported $name', async ({
+    source,
+    reason,
+  }) => {
+    const user = userEvent.setup();
+    const unsupported = { ...diagram, source };
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [unsupported],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    expect(await screen.findByLabelText('Mermaid source')).toHaveValue(source);
+    const preview = await screen.findByTestId('mermaid-preview');
+    await waitFor(() => expect(preview).toContainHTML('Rendered diagram'));
+    expect(screen.getByText('Interactive layout unavailable')).toBeInTheDocument();
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByText(reason)).not.toHaveAttribute('role', 'alert');
+  });
+
+  it('uses a validated saved canvas immediately and preserves exact positions across source collapse', async () => {
+    const user = userEvent.setup();
+    const savedCanvas = canvasAt(137.5, -42);
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: savedCanvas }],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    expect(await screen.findByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(savedCanvas),
+    );
+    expect(editorDependencies.importMermaidFlowchart).not.toHaveBeenCalled();
+    expect(editorDependencies.layoutImportedFlowchart).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Collapse source' }));
+    await user.click(screen.getByRole('button', { name: 'Expand source' }));
+    expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(savedCanvas),
+    );
+    expect(editorDependencies.layoutImportedFlowchart).not.toHaveBeenCalled();
+  });
+
+  it('cancels reset without changing positions, then confirms automatic layout, fits, and saves once', async () => {
+    const user = userEvent.setup();
+    const manualCanvas = canvasAt(900, 700);
+    const automaticCanvas = canvasAt(10, 20);
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: manualCanvas }],
+    });
+    const confirm = vi.spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Reset layout' }));
+    expect(confirm).toHaveBeenLastCalledWith(
+      'Reset all manually positioned nodes to an automatic layout?',
+    );
+    expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(manualCanvas),
+    );
+    expect(client.updateCalls).toBe(0);
+
+    await user.click(screen.getByRole('button', { name: 'Reset layout' }));
+    expect(editorDependencies.importMermaidFlowchart).toHaveBeenCalledWith(
+      diagram.source,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+        JSON.stringify(automaticCanvas),
+      ),
+    );
+    expect(screen.getByTestId('canvas-layout-revision')).toHaveTextContent('1');
+    await waitFor(() => expect(client.updateCalls).toBe(1));
+    expect(client.updateInputs[0]?.canvas).toEqual(automaticCanvas);
+  });
+
+  it('retains failed local positions and retries the complete canvas', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    client.failNextUpdate = true;
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await screen.findByRole('button', { name: 'Retry save' });
+    expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(canvasAt(110, 70)),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Retry save' }));
+    await waitFor(() => expect(client.updateCalls).toBe(2));
+    expect(client.updateInputs[1]?.canvas).toEqual(canvasAt(110, 70));
+  });
+
+  it('replaces local positions with the saved conflict choice without rendering canvas JSON', async () => {
+    const user = userEvent.setup();
+    const savedCanvas = canvasAt(10, 20);
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: savedCanvas }],
+    });
+    client.conflictNextUpdate = true;
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('2 nodes · 1 edges');
+    expect(dialog).not.toHaveTextContent('"kind":"flowchart"');
+    await user.click(screen.getByRole('button', { name: 'Use saved version' }));
+
+    expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(savedCanvas),
+    );
+  });
+
+  it('force-saves the complete local canvas after a conflict', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    client.conflictNextUpdate = true;
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await screen.findByRole('dialog');
+    await user.click(screen.getByRole('button', { name: 'Keep my version' }));
+
+    await waitFor(() => expect(client.updateCalls).toBe(2));
+    expect(client.updateInputs[1]).toMatchObject({
+      canvas: canvasAt(110, 70),
+      force: true,
+      version: 2,
+    });
+  });
+
+  it('ignores a stale compatible import after switching to another diagram', async () => {
+    const user = userEvent.setup();
+    const firstImport = deferred<{
+      status: 'compatible';
+      graph: typeof importedGraph;
+    }>();
+    const secondImport = deferred<{
+      status: 'compatible';
+      graph: typeof importedGraph;
+    }>();
+    editorDependencies.importMermaidFlowchart
+      .mockReturnValueOnce(firstImport.promise)
+      .mockReturnValueOnce(secondImport.promise);
+    editorDependencies.layoutImportedFlowchart.mockImplementation(
+      (graph: typeof importedGraph) => (
+        graph.nodes[0]?.label === 'Second'
+          ? canvasAt(222, 20)
+          : canvasAt(111, 20)
+      ),
+    );
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [diagram],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Duplicate' }));
+    secondImport.resolve({
+      status: 'compatible',
+      graph: {
+        ...importedGraph,
+        nodes: importedGraph.nodes.map((node, index) => (
+          index === 0 ? { ...node, label: 'Second' } : node
+        )),
+      },
+    });
+    expect(await screen.findByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(canvasAt(222, 20)),
+    );
+
+    firstImport.resolve({ status: 'compatible', graph: importedGraph });
+    await act(async () => {
+      await firstImport.promise;
+    });
+    expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(canvasAt(222, 20)),
+    );
   });
 });

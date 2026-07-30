@@ -11,7 +11,13 @@ import type {
   DiagramRecord,
   ProjectRecord,
 } from '@shared/types';
+import {
+  validateFlowchartCanvas,
+  type FlowchartCanvasV1,
+} from '@shared/flowchart-canvas-schema';
 import { ApiClientError, type WorkbenchApi } from '../api';
+import { importMermaidFlowchart } from '../flowchart-import';
+import { layoutImportedFlowchart } from '../flowchart-layout';
 import {
   saveStateLabel,
   saveStateReducer,
@@ -21,6 +27,7 @@ import {
   type MermaidRenderer,
 } from '../use-mermaid-preview';
 import { Dialog } from './Dialog';
+import { FlowchartCanvas } from './FlowchartCanvas';
 import { PreviewViewport } from './PreviewViewport';
 
 interface EditorViewProps {
@@ -38,14 +45,42 @@ interface EditorViewProps {
 interface Draft {
   title: string;
   source: string;
+  canvas: FlowchartCanvasV1 | null;
   version: number;
 }
+
+type DiagramPresentation =
+  | { mode: 'loading' }
+  | { mode: 'interactive'; canvas: FlowchartCanvasV1; transient: boolean }
+  | { mode: 'static'; reason: string };
 
 function isConflictDetails(value: unknown): value is ConflictDetails {
   if (!value || typeof value !== 'object') {
     return false;
   }
   return 'current' in value && 'submitted' in value;
+}
+
+function validatedCanvas(
+  canvas: FlowchartCanvasV1 | null,
+): { canvas: FlowchartCanvasV1 | null; error: string | null } {
+  if (canvas === null) {
+    return { canvas: null, error: null };
+  }
+  try {
+    return { canvas: validateFlowchartCanvas(canvas), error: null };
+  } catch {
+    return {
+      canvas: null,
+      error: 'The saved interactive layout is invalid. The Mermaid preview remains available.',
+    };
+  }
+}
+
+function canvasSummary(canvas: FlowchartCanvasV1 | null) {
+  return canvas
+    ? `${canvas.nodes.length} nodes · ${canvas.edges.length} edges`
+    : 'No interactive layout';
 }
 
 export function EditorView({
@@ -59,32 +94,98 @@ export function EditorView({
   onDuplicate,
   onDelete,
 }: EditorViewProps) {
+  const initialCanvas = validatedCanvas(diagram.canvas);
   const [draft, setDraft] = useState<Draft>({
     title: diagram.title,
     source: diagram.source,
+    canvas: initialCanvas.canvas,
     version: diagram.version,
   });
+  const [presentation, setPresentation] = useState<DiagramPresentation>(
+    initialCanvas.canvas
+      ? {
+        mode: 'interactive',
+        canvas: initialCanvas.canvas,
+        transient: false,
+      }
+      : initialCanvas.error
+        ? { mode: 'static', reason: initialCanvas.error }
+        : { mode: 'loading' },
+  );
   const [saveState, dispatchSave] = useReducer(saveStateReducer, {
     status: 'saved',
   });
   const [conflict, setConflict] = useState<ConflictDetails | null>(null);
   const [sourceCollapsed, setSourceCollapsed] = useState(false);
   const [sourceLayoutRevision, setSourceLayoutRevision] = useState(0);
+  const [canvasFitRevision, setCanvasFitRevision] = useState(0);
   const pendingSave = useRef<Promise<void> | null>(null);
+  const activeDiagramIdRef = useRef(diagram.id);
   const collapseSourceRef = useRef<HTMLButtonElement>(null);
   const expandSourceRef = useRef<HTMLButtonElement>(null);
   const sourceFocusTargetRef = useRef<'collapse' | 'expand' | null>(null);
   const preview = useMermaidPreview(draft.source, renderDiagram);
 
   useEffect(() => {
+    activeDiagramIdRef.current = diagram.id;
+    let active = true;
+    const nextCanvas = validatedCanvas(diagram.canvas);
     setDraft({
       title: diagram.title,
       source: diagram.source,
+      canvas: nextCanvas.canvas,
       version: diagram.version,
     });
     dispatchSave({ type: 'RESET' });
     setConflict(null);
     setSourceCollapsed(false);
+    setSourceLayoutRevision(0);
+    setCanvasFitRevision(0);
+
+    if (nextCanvas.canvas) {
+      setPresentation({
+        mode: 'interactive',
+        canvas: nextCanvas.canvas,
+        transient: false,
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    if (nextCanvas.error) {
+      setPresentation({ mode: 'static', reason: nextCanvas.error });
+      return () => {
+        active = false;
+      };
+    }
+
+    setPresentation({ mode: 'loading' });
+    void importMermaidFlowchart(diagram.source).then((result) => {
+      if (!active) {
+        return;
+      }
+      if (result.status === 'unsupported') {
+        setPresentation({ mode: 'static', reason: result.reason });
+        return;
+      }
+      try {
+        const canvas = validateFlowchartCanvas(
+          layoutImportedFlowchart(result.graph),
+        );
+        setDraft((current) => ({ ...current, canvas }));
+        setPresentation({ mode: 'interactive', canvas, transient: true });
+      } catch {
+        setPresentation({
+          mode: 'static',
+          reason: 'The flowchart could not be prepared for interactive layout.',
+        });
+      }
+    });
+
+    return () => {
+      active = false;
+    };
   }, [diagram.id]);
 
   const collapseSource = () => {
@@ -119,6 +220,7 @@ export function EditorView({
         .updateDiagram(diagram.id, {
           title: snapshot.title,
           source: snapshot.source,
+          canvas: snapshot.canvas,
           version: options?.forceVersion ?? snapshot.version,
           ...(options ? { force: true } : {}),
         })
@@ -198,14 +300,82 @@ export function EditorView({
     if (!conflict) {
       return;
     }
+    const savedCanvas = validatedCanvas(conflict.current.canvas);
     setDraft({
       title: conflict.current.title,
       source: conflict.current.source,
+      canvas: savedCanvas.canvas,
       version: conflict.current.version,
     });
+    if (savedCanvas.canvas) {
+      setPresentation({
+        mode: 'interactive',
+        canvas: savedCanvas.canvas,
+        transient: false,
+      });
+    } else {
+      setPresentation({
+        mode: 'static',
+        reason:
+          savedCanvas.error ??
+          'This saved version has no interactive layout.',
+      });
+    }
     onUpdated(conflict.current);
     setConflict(null);
     dispatchSave({ type: 'RESET' });
+  };
+
+  const updateCanvasLocally = (canvas: FlowchartCanvasV1) => {
+    setDraft((current) => ({ ...current, canvas }));
+    setPresentation((current) => ({
+      mode: 'interactive',
+      canvas,
+      transient: current.mode === 'interactive' && current.transient,
+    }));
+  };
+
+  const commitCanvas = (canvas: FlowchartCanvasV1) => {
+    setDraft((current) => ({ ...current, canvas }));
+    setPresentation({
+      mode: 'interactive',
+      canvas,
+      transient: false,
+    });
+    dispatchSave({ type: 'EDITED' });
+  };
+
+  const resetLayout = async () => {
+    if (
+      !window.confirm(
+        'Reset all manually positioned nodes to an automatic layout?',
+      )
+    ) {
+      return;
+    }
+    const diagramId = diagram.id;
+    const result = await importMermaidFlowchart(draft.source);
+    if (
+      activeDiagramIdRef.current !== diagramId ||
+      result.status !== 'compatible'
+    ) {
+      return;
+    }
+    try {
+      const canvas = validateFlowchartCanvas(
+        layoutImportedFlowchart(result.graph),
+      );
+      setDraft((current) => ({ ...current, canvas }));
+      setPresentation({
+        mode: 'interactive',
+        canvas,
+        transient: false,
+      });
+      setCanvasFitRevision((current) => current + 1);
+      dispatchSave({ type: 'EDITED' });
+    } catch {
+      // Keep the current canvas intact when import or layout validation fails.
+    }
   };
 
   return (
@@ -362,13 +532,45 @@ export function EditorView({
             </section>
           )}
 
-          <PreviewViewport
-            key={diagram.id}
-            svg={preview.svg}
-            rendering={preview.rendering}
-            error={preview.error}
-            sourceLayoutRevision={sourceLayoutRevision}
-          />
+          {presentation.mode === 'interactive' ? (
+            <section className="workspace-panel workspace-panel--canvas">
+              <header className="preview-header">
+                <div>
+                  <span className="panel-index">02</span>
+                  <h2>Preview</h2>
+                </div>
+              </header>
+              <FlowchartCanvas
+                key={diagram.id}
+                canvas={presentation.canvas}
+                sourceLayoutRevision={canvasFitRevision}
+                onCanvasChange={updateCanvasLocally}
+                onCommit={commitCanvas}
+                onResetLayout={() => void resetLayout()}
+              />
+            </section>
+          ) : presentation.mode === 'static' ? (
+            <div className="workspace-preview-column">
+              <div className="interactive-unavailable">
+                <strong>Interactive layout unavailable</strong>
+                <span>{presentation.reason}</span>
+              </div>
+              <PreviewViewport
+                key={diagram.id}
+                svg={preview.svg}
+                rendering={preview.rendering}
+                error={preview.error}
+                sourceLayoutRevision={sourceLayoutRevision}
+              />
+            </div>
+          ) : (
+            <section
+              className="workspace-panel workspace-panel--canvas-loading"
+              aria-label="Preparing diagram"
+            >
+              <p role="status">Preparing interactive layout…</p>
+            </section>
+          )}
         </div>
       </section>
 
@@ -377,6 +579,7 @@ export function EditorView({
           title="Choose which version to keep"
           description="Another request saved this diagram before your changes reached the local database. Review the choice carefully."
           confirmLabel="Keep my version"
+          closeLabel="Use saved version"
           onClose={useSavedVersion}
           onConfirm={() => save({ forceVersion: conflict.current.version })}
         >
@@ -384,19 +587,14 @@ export function EditorView({
             <div>
               <strong>Saved version</strong>
               <pre>{conflict.current.source}</pre>
+              <span>{canvasSummary(conflict.current.canvas)}</span>
             </div>
             <div>
               <strong>My version</strong>
               <pre>{draft.source}</pre>
+              <span>{canvasSummary(draft.canvas)}</span>
             </div>
           </div>
-          <button
-            type="button"
-            className="button button--quiet"
-            onClick={useSavedVersion}
-          >
-            Use saved version
-          </button>
         </Dialog>
       ) : null}
     </main>

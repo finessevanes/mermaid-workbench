@@ -4,6 +4,7 @@ interface DialogProps {
   title: string;
   description?: string;
   confirmLabel: string;
+  closeLabel?: string;
   destructive?: boolean;
   children?: ReactNode;
   onConfirm: () => void | Promise<void>;
@@ -14,6 +15,7 @@ export function Dialog({
   title,
   description,
   confirmLabel,
+  closeLabel = 'Cancel',
   destructive = false,
   children,
   onConfirm,
@@ -56,7 +58,7 @@ export function Dialog({
         {children ? <div className="dialog__content">{children}</div> : null}
         <div className="dialog__actions">
           <button type="button" className="button button--quiet" onClick={onClose}>
-            Cancel
+            {closeLabel}
           </button>
           <button
             type="submit"
