@@ -11,6 +11,9 @@ database.
 
 - Organize diagrams into projects.
 - Edit Mermaid source with a live, last-valid preview.
+- Open compatible flowcharts as draggable visual canvases whose connected
+  edges reroute while nodes move.
+- Persist visual node positions separately from the retained Mermaid source.
 - Collapse the source editor into a slim rail for more canvas space.
 - Pinch to zoom, use a two-finger gesture or mouse drag to pan, and quickly
   return to fit-to-view or 100%.
@@ -100,6 +103,25 @@ Keep exported backups somewhere outside the source checkout.
 The browser does not expose a dependable exact three-finger trackpad gesture,
 so Mermaid Workbench uses standard two-finger wheel movement for panning.
 
+## Interactive flowcharts
+
+Compatible `flowchart` and `graph` diagrams open in an interactive canvas.
+Drag nodes to arrange the diagram; connected edges reroute during the drag,
+and the resulting node positions persist independently from the Mermaid
+source. Use `Reset layout` to replace manual positions with a fresh automatic
+layout.
+
+Mermaid source remains the import and export format. For an interactive
+flowchart, choose `Edit import`, stage the source change, and then choose
+`Apply import` to update the canvas explicitly. Diagrams that are not
+compatible with the interactive flowchart importer, including sequence
+diagrams, continue to use the editable source panel and static Mermaid
+preview with an explanation.
+
+V1 does not visually add or delete nodes, and it does not visually add,
+delete, or reconnect edges. Make those topology changes in Mermaid source and
+apply them through the import flow.
+
 ## Verification commands
 
 ```bash
@@ -110,8 +132,9 @@ npm run test:e2e
 ```
 
 `npm test` runs unit and HTTP integration coverage. `npm run test:e2e` starts an
-isolated development instance and uses Playwright to create, render, save,
-reload, and reopen a diagram.
+isolated development instance and uses Playwright to drag and persist a
+flowchart layout, reset it, reload it, and verify the static fallback for an
+unsupported diagram.
 
 ## Local security boundary
 
