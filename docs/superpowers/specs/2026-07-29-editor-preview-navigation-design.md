@@ -1,7 +1,7 @@
 # Editor Source Rail and Preview Navigation Design
 
 **Date:** 2026-07-29
-**Status:** Approved interaction design, pending written-spec review
+**Status:** Approved
 
 ## Goal
 
