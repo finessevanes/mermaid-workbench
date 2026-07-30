@@ -99,7 +99,9 @@ function createMemoryApi(initial?: {
   diagrams: DiagramRecord[];
   failNextUpdate: boolean;
   conflictNextUpdate: boolean;
+  conflictNextCanvasNull: boolean;
   updateCalls: number;
+  updateDelays: Promise<void>[];
   updateInputs: Array<{
     title?: string;
     source?: string;
@@ -115,7 +117,9 @@ function createMemoryApi(initial?: {
     diagrams: [...(initial?.diagrams ?? [])],
     failNextUpdate: false,
     conflictNextUpdate: false,
+    conflictNextCanvasNull: false,
     updateCalls: 0,
+    updateDelays: [] as Promise<void>[],
     updateInputs: [] as Array<{
       title?: string;
       source?: string;
@@ -191,6 +195,10 @@ function createMemoryApi(initial?: {
     ) => {
       state.updateCalls += 1;
       state.updateInputs.push(input);
+      const delay = state.updateDelays.shift();
+      if (delay) {
+        await delay;
+      }
       const current = state.diagrams.find((diagram) => diagram.id === id)!;
       if (state.failNextUpdate) {
         state.failNextUpdate = false;
@@ -205,8 +213,10 @@ function createMemoryApi(initial?: {
         const saved = {
           ...current,
           source: 'flowchart LR\n  Saved --> Elsewhere',
+          ...(state.conflictNextCanvasNull ? { canvas: null } : {}),
           version: current.version + 1,
         };
+        state.conflictNextCanvasNull = false;
         state.diagrams = state.diagrams.map((diagram) =>
           diagram.id === id ? saved : diagram,
         );
@@ -871,5 +881,214 @@ describe('App', () => {
     expect(screen.getByTestId('canvas-document')).toHaveTextContent(
       JSON.stringify(canvasAt(222, 20)),
     );
+  });
+
+  it('serializes a newer canvas commit behind an in-flight save and uses the returned version', async () => {
+    const user = userEvent.setup();
+    const firstSave = deferred<void>();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    client.updateDelays.push(firstSave.promise);
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await waitFor(() => expect(client.updateCalls).toBe(1));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    expect(client.updateCalls).toBe(1);
+
+    firstSave.resolve();
+    await waitFor(() => expect(client.updateCalls).toBe(2));
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: 'Save status' }))
+        .toHaveTextContent('Saved'),
+    );
+    expect(client.updateInputs).toMatchObject([
+      { version: 1, canvas: canvasAt(110, 70) },
+      { version: 2, canvas: canvasAt(210, 120) },
+    ]);
+    expect(client.diagrams[0].canvas).toEqual(canvasAt(210, 120));
+  });
+
+  it('flushes a dirty debounced canvas before returning to the library', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={1000} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await user.click(screen.getByRole('button', { name: 'Library' }));
+
+    expect(await screen.findByRole('button', { name: 'Open Release path' }))
+      .toBeInTheDocument();
+    expect(client.updateCalls).toBe(1);
+    expect(client.diagrams[0].canvas).toEqual(canvasAt(110, 70));
+  });
+
+  it('uses the completed save outcome before leaving after an active save fails', async () => {
+    const user = userEvent.setup();
+    const activeSave = deferred<void>();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    client.updateDelays.push(activeSave.promise);
+    client.failNextUpdate = true;
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await waitFor(() => expect(client.updateCalls).toBe(1));
+    await user.click(screen.getByRole('button', { name: 'Library' }));
+    activeSave.resolve();
+
+    await waitFor(() =>
+      expect(confirm).toHaveBeenCalledWith(
+        'This diagram has unsaved changes. Leave the editor anyway?',
+      ),
+    );
+    expect(
+      screen.getByRole('heading', { name: 'Release path', level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry save' })).toBeInTheDocument();
+  });
+
+  it('flushes a dirty canvas before duplicating so the copy inherits its positions', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={1000} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await user.click(screen.getByRole('button', { name: 'Duplicate' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Release path copy', level: 1 }),
+    ).toBeInTheDocument();
+    expect(client.updateCalls).toBe(1);
+    expect(client.diagrams[1]?.canvas).toEqual(canvasAt(110, 70));
+  });
+
+  it('restarts a same-diagram initial import when retained source changes and ignores the old result', async () => {
+    const user = userEvent.setup();
+    const firstImport = deferred<{
+      status: 'compatible';
+      graph: typeof importedGraph;
+    }>();
+    const secondImport = deferred<{
+      status: 'compatible';
+      graph: typeof importedGraph;
+    }>();
+    editorDependencies.importMermaidFlowchart
+      .mockReturnValueOnce(firstImport.promise)
+      .mockReturnValueOnce(secondImport.promise);
+    editorDependencies.layoutImportedFlowchart.mockImplementation(
+      (graph: typeof importedGraph) => (
+        graph.nodes[0]?.label === 'Second'
+          ? canvasAt(222, 20)
+          : canvasAt(111, 20)
+      ),
+    );
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [diagram],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={1000} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    fireEvent.change(screen.getByLabelText('Mermaid source'), {
+      target: { value: 'flowchart LR\n  Second --> Ship' },
+    });
+    await waitFor(() =>
+      expect(editorDependencies.importMermaidFlowchart).toHaveBeenCalledTimes(2),
+    );
+    secondImport.resolve({
+      status: 'compatible',
+      graph: {
+        ...importedGraph,
+        nodes: importedGraph.nodes.map((node, index) => (
+          index === 0 ? { ...node, label: 'Second' } : node
+        )),
+      },
+    });
+    expect(await screen.findByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(canvasAt(222, 20)),
+    );
+
+    firstImport.resolve({ status: 'compatible', graph: importedGraph });
+    await act(async () => {
+      await firstImport.promise;
+    });
+    expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(canvasAt(222, 20)),
+    );
+  });
+
+  it('ignores a reset result when retained source changes on the same diagram', async () => {
+    const user = userEvent.setup();
+    const resetImport = deferred<{
+      status: 'compatible';
+      graph: typeof importedGraph;
+    }>();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    editorDependencies.importMermaidFlowchart.mockReturnValueOnce(
+      resetImport.promise,
+    );
+    const manualCanvas = canvasAt(900, 700);
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: manualCanvas }],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={1000} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Reset layout' }));
+    fireEvent.change(screen.getByLabelText('Mermaid source'), {
+      target: { value: 'flowchart LR\n  Changed --> Ship' },
+    });
+    resetImport.resolve({ status: 'compatible', graph: importedGraph });
+    await act(async () => {
+      await resetImport.promise;
+    });
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(screen.getByTestId('canvas-document')).toHaveTextContent(
+      JSON.stringify(manualCanvas),
+    );
+    expect(editorDependencies.layoutImportedFlowchart).not.toHaveBeenCalled();
+  });
+
+  it('reimports a compatible saved conflict choice that has no canvas', async () => {
+    const user = userEvent.setup();
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    client.conflictNextUpdate = true;
+    client.conflictNextCanvasNull = true;
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Drag idea node' }));
+    await screen.findByRole('dialog');
+    await user.click(screen.getByRole('button', { name: 'Use saved version' }));
+
+    expect(
+      await screen.findByRole('region', { name: 'Interactive flowchart' }),
+    ).toBeInTheDocument();
+    expect(editorDependencies.importMermaidFlowchart).toHaveBeenCalledWith(
+      'flowchart LR\n  Saved --> Elsewhere',
+    );
+    expect(client.updateCalls).toBe(1);
   });
 });

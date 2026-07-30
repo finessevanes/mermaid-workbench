@@ -21,6 +21,8 @@ import { layoutImportedFlowchart } from '../flowchart-layout';
 import {
   saveStateLabel,
   saveStateReducer,
+  type SaveState,
+  type SaveStateAction,
 } from '../save-state';
 import {
   useMermaidPreview,
@@ -119,24 +121,86 @@ export function EditorView({
   const [sourceCollapsed, setSourceCollapsed] = useState(false);
   const [sourceLayoutRevision, setSourceLayoutRevision] = useState(0);
   const [canvasFitRevision, setCanvasFitRevision] = useState(0);
+  const draftRef = useRef(draft);
+  const saveStateRef = useRef<SaveState>({ status: 'saved' });
   const pendingSave = useRef<Promise<void> | null>(null);
+  const editGenerationRef = useRef(0);
+  const savedGenerationRef = useRef(0);
+  const requestedSaveGenerationRef = useRef(0);
+  const forceSaveOptionsRef = useRef<{ forceVersion: number } | null>(null);
+  const presentationOperationRef = useRef(0);
   const activeDiagramIdRef = useRef(diagram.id);
   const collapseSourceRef = useRef<HTMLButtonElement>(null);
   const expandSourceRef = useRef<HTMLButtonElement>(null);
   const sourceFocusTargetRef = useRef<'collapse' | 'expand' | null>(null);
   const preview = useMermaidPreview(draft.source, renderDiagram);
+  const previewRef = useRef({
+    error: preview.error,
+    rendering: preview.rendering,
+  });
+  previewRef.current = {
+    error: preview.error,
+    rendering: preview.rendering,
+  };
+  activeDiagramIdRef.current = diagram.id;
+
+  const transitionSaveState = (action: SaveStateAction) => {
+    saveStateRef.current = saveStateReducer(saveStateRef.current, action);
+    dispatchSave(action);
+  };
+
+  const replaceDraft = (next: Draft) => {
+    draftRef.current = next;
+    setDraft(next);
+  };
+
+  const importPresentation = useCallback(
+    (source: string, diagramId: string) => {
+      const operation = ++presentationOperationRef.current;
+      setPresentation({ mode: 'loading' });
+      void importMermaidFlowchart(source).then((result) => {
+        if (
+          presentationOperationRef.current !== operation ||
+          activeDiagramIdRef.current !== diagramId ||
+          draftRef.current.source !== source
+        ) {
+          return;
+        }
+        if (result.status === 'unsupported') {
+          setPresentation({ mode: 'static', reason: result.reason });
+          return;
+        }
+        try {
+          const canvas = validateFlowchartCanvas(
+            layoutImportedFlowchart(result.graph),
+          );
+          replaceDraft({ ...draftRef.current, canvas });
+          setPresentation({ mode: 'interactive', canvas, transient: true });
+        } catch {
+          setPresentation({
+            mode: 'static',
+            reason: 'The flowchart could not be prepared for interactive layout.',
+          });
+        }
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
-    activeDiagramIdRef.current = diagram.id;
-    let active = true;
+    presentationOperationRef.current += 1;
     const nextCanvas = validatedCanvas(diagram.canvas);
-    setDraft({
+    replaceDraft({
       title: diagram.title,
       source: diagram.source,
       canvas: nextCanvas.canvas,
       version: diagram.version,
     });
-    dispatchSave({ type: 'RESET' });
+    editGenerationRef.current = 0;
+    savedGenerationRef.current = 0;
+    requestedSaveGenerationRef.current = 0;
+    forceSaveOptionsRef.current = null;
+    transitionSaveState({ type: 'RESET' });
     setConflict(null);
     setSourceCollapsed(false);
     setSourceLayoutRevision(0);
@@ -148,44 +212,15 @@ export function EditorView({
         canvas: nextCanvas.canvas,
         transient: false,
       });
-      return () => {
-        active = false;
-      };
+      return;
     }
 
     if (nextCanvas.error) {
       setPresentation({ mode: 'static', reason: nextCanvas.error });
-      return () => {
-        active = false;
-      };
+      return;
     }
 
-    setPresentation({ mode: 'loading' });
-    void importMermaidFlowchart(diagram.source).then((result) => {
-      if (!active) {
-        return;
-      }
-      if (result.status === 'unsupported') {
-        setPresentation({ mode: 'static', reason: result.reason });
-        return;
-      }
-      try {
-        const canvas = validateFlowchartCanvas(
-          layoutImportedFlowchart(result.graph),
-        );
-        setDraft((current) => ({ ...current, canvas }));
-        setPresentation({ mode: 'interactive', canvas, transient: true });
-      } catch {
-        setPresentation({
-          mode: 'static',
-          reason: 'The flowchart could not be prepared for interactive layout.',
-        });
-      }
-    });
-
-    return () => {
-      active = false;
-    };
+    importPresentation(diagram.source, diagram.id);
   }, [diagram.id]);
 
   const collapseSource = () => {
@@ -214,48 +249,91 @@ export function EditorView({
 
   const save = useCallback(
     (options?: { forceVersion?: number }) => {
-      const snapshot = { ...draft };
-      dispatchSave({ type: 'SAVE_STARTED' });
-      const operation = client
-        .updateDiagram(diagram.id, {
-          title: snapshot.title,
-          source: snapshot.source,
-          canvas: snapshot.canvas,
-          version: options?.forceVersion ?? snapshot.version,
-          ...(options ? { force: true } : {}),
-        })
-        .then((updated) => {
-          setDraft((current) => ({
-            ...current,
-            version: updated.version,
-          }));
-          onUpdated(updated);
-          setConflict(null);
-          dispatchSave({ type: 'SAVE_SUCCEEDED' });
-        })
-        .catch((error: unknown) => {
-          if (
-            error instanceof ApiClientError &&
-            error.code === 'VERSION_CONFLICT' &&
-            isConflictDetails(error.details)
-          ) {
-            setConflict(error.details);
+      requestedSaveGenerationRef.current = Math.max(
+        requestedSaveGenerationRef.current,
+        editGenerationRef.current,
+      );
+      if (options?.forceVersion !== undefined) {
+        forceSaveOptionsRef.current = {
+          forceVersion: options.forceVersion,
+        };
+      }
+      if (pendingSave.current) {
+        return pendingSave.current;
+      }
+
+      const diagramId = diagram.id;
+      const run = async () => {
+        while (
+          savedGenerationRef.current <
+            requestedSaveGenerationRef.current ||
+          forceSaveOptionsRef.current
+        ) {
+          const targetGeneration = editGenerationRef.current;
+          const forceOptions = forceSaveOptionsRef.current;
+          forceSaveOptionsRef.current = null;
+          const snapshot = { ...draftRef.current };
+          transitionSaveState({ type: 'SAVE_STARTED' });
+          try {
+            const updated = await client.updateDiagram(diagramId, {
+              title: snapshot.title,
+              source: snapshot.source,
+              canvas: snapshot.canvas,
+              version:
+                forceOptions?.forceVersion ??
+                snapshot.version,
+              ...(forceOptions ? { force: true } : {}),
+            });
+            if (activeDiagramIdRef.current !== diagramId) {
+              return;
+            }
+            savedGenerationRef.current = Math.max(
+              savedGenerationRef.current,
+              targetGeneration,
+            );
+            replaceDraft({
+              ...draftRef.current,
+              version: updated.version,
+            });
+            onUpdated(updated);
+            setConflict(null);
+            if (
+              editGenerationRef.current === targetGeneration &&
+              requestedSaveGenerationRef.current <= targetGeneration
+            ) {
+              transitionSaveState({ type: 'SAVE_SUCCEEDED' });
+            } else {
+              transitionSaveState({ type: 'EDITED' });
+            }
+          } catch (error: unknown) {
+            if (
+              error instanceof ApiClientError &&
+              error.code === 'VERSION_CONFLICT' &&
+              isConflictDetails(error.details)
+            ) {
+              setConflict(error.details);
+            }
+            transitionSaveState({
+              type: 'SAVE_FAILED',
+              message:
+                error instanceof Error
+                  ? error.message
+                  : 'The diagram could not be saved.',
+            });
+            return;
           }
-          dispatchSave({
-            type: 'SAVE_FAILED',
-            message:
-              error instanceof Error
-                ? error.message
-                : 'The diagram could not be saved.',
-          });
-        })
-        .finally(() => {
+        }
+      };
+      const operation = run();
+      const trackedOperation = operation.finally(() => {
+        if (pendingSave.current === trackedOperation) {
           pendingSave.current = null;
-        });
-      pendingSave.current = operation;
-      return operation;
+        }
+      });
+      pendingSave.current = trackedOperation;
+      return trackedOperation;
     },
-    [client, diagram.id, draft, onUpdated],
+    [client, diagram.id, onUpdated],
   );
 
   useEffect(() => {
@@ -279,55 +357,116 @@ export function EditorView({
   ]);
 
   const updateDraft = (next: Partial<Pick<Draft, 'title' | 'source'>>) => {
-    setDraft((current) => ({ ...current, ...next }));
-    dispatchSave({ type: 'EDITED' });
+    const nextDraft = { ...draftRef.current, ...next };
+    replaceDraft(nextDraft);
+    editGenerationRef.current += 1;
+    transitionSaveState({ type: 'EDITED' });
+    if (next.source !== undefined) {
+      presentationOperationRef.current += 1;
+      if (presentation.mode === 'loading') {
+        importPresentation(next.source, diagram.id);
+      }
+    }
+  };
+
+  const flushPendingChanges = async () => {
+    while (true) {
+      if (saveStateRef.current.status === 'failed') {
+        return false;
+      }
+      if (
+        editGenerationRef.current > savedGenerationRef.current &&
+        !pendingSave.current
+      ) {
+        if (
+          previewRef.current.error ||
+          (
+            previewRef.current.rendering &&
+            draftRef.current.source !== diagram.source
+          )
+        ) {
+          return false;
+        }
+        await save();
+        continue;
+      }
+      const activeSave = pendingSave.current;
+      if (activeSave) {
+        requestedSaveGenerationRef.current = Math.max(
+          requestedSaveGenerationRef.current,
+          editGenerationRef.current,
+        );
+        await activeSave;
+        continue;
+      }
+      return editGenerationRef.current <= savedGenerationRef.current;
+    }
+  };
+
+  const confirmFlushedChanges = async () => {
+    if (
+      !(await flushPendingChanges()) &&
+      !window.confirm(
+        'This diagram has unsaved changes. Leave the editor anyway?',
+      )
+    ) {
+      return false;
+    }
+    return true;
   };
 
   const handleBack = async () => {
-    if (pendingSave.current) {
-      await pendingSave.current;
-    }
-    if (
-      saveState.status === 'failed' &&
-      !window.confirm('This diagram has unsaved changes. Leave the editor anyway?')
-    ) {
+    if (!(await confirmFlushedChanges())) {
       return;
     }
     onBack();
+  };
+
+  const handleDuplicate = async () => {
+    if (!(await confirmFlushedChanges())) {
+      return;
+    }
+    onDuplicate();
   };
 
   const useSavedVersion = () => {
     if (!conflict) {
       return;
     }
-    const savedCanvas = validatedCanvas(conflict.current.canvas);
-    setDraft({
-      title: conflict.current.title,
-      source: conflict.current.source,
+    presentationOperationRef.current += 1;
+    const savedRecord = conflict.current;
+    const savedCanvas = validatedCanvas(savedRecord.canvas);
+    replaceDraft({
+      title: savedRecord.title,
+      source: savedRecord.source,
       canvas: savedCanvas.canvas,
-      version: conflict.current.version,
+      version: savedRecord.version,
     });
+    editGenerationRef.current = 0;
+    savedGenerationRef.current = 0;
+    requestedSaveGenerationRef.current = 0;
+    forceSaveOptionsRef.current = null;
     if (savedCanvas.canvas) {
       setPresentation({
         mode: 'interactive',
         canvas: savedCanvas.canvas,
         transient: false,
       });
-    } else {
+    } else if (savedCanvas.error) {
       setPresentation({
         mode: 'static',
-        reason:
-          savedCanvas.error ??
-          'This saved version has no interactive layout.',
+        reason: savedCanvas.error,
       });
+    } else {
+      importPresentation(savedRecord.source, savedRecord.id);
     }
-    onUpdated(conflict.current);
+    onUpdated(savedRecord);
     setConflict(null);
-    dispatchSave({ type: 'RESET' });
+    transitionSaveState({ type: 'RESET' });
   };
 
   const updateCanvasLocally = (canvas: FlowchartCanvasV1) => {
-    setDraft((current) => ({ ...current, canvas }));
+    replaceDraft({ ...draftRef.current, canvas });
     setPresentation((current) => ({
       mode: 'interactive',
       canvas,
@@ -336,13 +475,14 @@ export function EditorView({
   };
 
   const commitCanvas = (canvas: FlowchartCanvasV1) => {
-    setDraft((current) => ({ ...current, canvas }));
+    replaceDraft({ ...draftRef.current, canvas });
     setPresentation({
       mode: 'interactive',
       canvas,
       transient: false,
     });
-    dispatchSave({ type: 'EDITED' });
+    editGenerationRef.current += 1;
+    transitionSaveState({ type: 'EDITED' });
   };
 
   const resetLayout = async () => {
@@ -354,9 +494,15 @@ export function EditorView({
       return;
     }
     const diagramId = diagram.id;
-    const result = await importMermaidFlowchart(draft.source);
+    const source = draftRef.current.source;
+    const editGeneration = editGenerationRef.current;
+    const operation = ++presentationOperationRef.current;
+    const result = await importMermaidFlowchart(source);
     if (
+      presentationOperationRef.current !== operation ||
       activeDiagramIdRef.current !== diagramId ||
+      draftRef.current.source !== source ||
+      editGenerationRef.current !== editGeneration ||
       result.status !== 'compatible'
     ) {
       return;
@@ -365,14 +511,15 @@ export function EditorView({
       const canvas = validateFlowchartCanvas(
         layoutImportedFlowchart(result.graph),
       );
-      setDraft((current) => ({ ...current, canvas }));
+      replaceDraft({ ...draftRef.current, canvas });
       setPresentation({
         mode: 'interactive',
         canvas,
         transient: false,
       });
       setCanvasFitRevision((current) => current + 1);
-      dispatchSave({ type: 'EDITED' });
+      editGenerationRef.current += 1;
+      transitionSaveState({ type: 'EDITED' });
     } catch {
       // Keep the current canvas intact when import or layout validation fails.
     }
@@ -440,7 +587,7 @@ export function EditorView({
             <button
               type="button"
               className="button button--quiet"
-              onClick={onDuplicate}
+              onClick={() => void handleDuplicate()}
             >
               Duplicate
             </button>
