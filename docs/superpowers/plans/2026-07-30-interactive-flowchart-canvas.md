@@ -525,7 +525,7 @@ const lineStyle = {
 Construct edge IDs as:
 
 ```ts
-`${encodeURIComponent(source)}-${encodeURIComponent(target)}-${occurrence}`
+`edge|${encodeURIComponent(source)}|${encodeURIComponent(target)}|${occurrence}`
 ```
 
 where `occurrence` increments for every edge with the same endpoints. Catch

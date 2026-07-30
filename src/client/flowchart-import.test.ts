@@ -1,7 +1,32 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest';
-import { importMermaidFlowchart } from './flowchart-import';
+import {
+  importMermaidFlowchart,
+  normalizeMermaidFlowchartDiagram,
+} from './flowchart-import';
+
+function parsedFlowchartModel({
+  type = 'flowchart-v2',
+  nodes = [
+    { id: 'A', label: 'A', shape: 'squareRect' },
+    { id: 'B', label: 'B', shape: 'squareRect' },
+  ],
+  edges = [],
+}: {
+  type?: string;
+  nodes?: Record<string, unknown>[];
+  edges?: Record<string, unknown>[];
+}) {
+  return {
+    type,
+    db: {
+      getDirection: () => 'TB',
+      getSubGraphs: () => [],
+      getData: () => ({ nodes, edges }),
+    },
+  };
+}
 
 describe('importMermaidFlowchart', () => {
   it('normalizes a real Mermaid flowchart into stable Workbench graph data', async () => {
@@ -20,7 +45,7 @@ describe('importMermaidFlowchart', () => {
         ],
         edges: [
           {
-            id: 'idea-decision-0',
+            id: 'edge|idea|decision|0',
             source: 'idea',
             target: 'decision',
             label: 'refine',
@@ -29,7 +54,7 @@ describe('importMermaidFlowchart', () => {
             lineStyle: 'solid',
           },
           {
-            id: 'decision-ship-0',
+            id: 'edge|decision|ship|0',
             source: 'decision',
             target: 'ship',
             arrowStart: false,
@@ -54,12 +79,48 @@ describe('importMermaidFlowchart', () => {
       status: 'compatible',
       graph: {
         edges: [
-          { id: 'source-target-0', source: 'source', target: 'target' },
-          { id: 'source-target-1', source: 'source', target: 'target' },
+          { id: 'edge|source|target|0', source: 'source', target: 'target' },
+          { id: 'edge|source|target|1', source: 'source', target: 'target' },
         ],
       },
     });
     expect(second).toEqual(first);
+  });
+
+  it('keeps edge IDs distinct when endpoint IDs contain delimiter characters', async () => {
+    const result = await importMermaidFlowchart(`flowchart LR
+  a-b --> c
+  a --> b-c`);
+
+    expect(result).toMatchObject({
+      status: 'compatible',
+      graph: {
+        edges: [
+          { id: 'edge|a-b|c|0', source: 'a-b', target: 'c' },
+          { id: 'edge|a|b-c|0', source: 'a', target: 'b-c' },
+        ],
+      },
+    });
+  });
+
+  it('admits the graph source alias through the reviewed flowchart model', async () => {
+    const result = await importMermaidFlowchart(`graph RL
+  start --> finish`);
+
+    expect(result).toMatchObject({
+      status: 'compatible',
+      graph: {
+        direction: 'RL',
+        nodes: [{ id: 'start' }, { id: 'finish' }],
+        edges: [
+          {
+            id: 'edge|start|finish|0',
+            source: 'start',
+            target: 'finish',
+          },
+        ],
+      },
+    });
   });
 
   it('maps every Mermaid line style without collapsing arrow metadata', async () => {
@@ -111,6 +172,7 @@ describe('importMermaidFlowchart', () => {
   click A callback`,
     ],
     ['HTML labels', `flowchart LR\n  A["<strong>Hello</strong>"] --> B`],
+    ['HTML edge labels', `flowchart LR\n  A -->|<strong>Hello</strong>| B`],
   ])('rejects %s as unsupported', async (_caseName, source) => {
     const result = await importMermaidFlowchart(source);
 
@@ -128,6 +190,94 @@ describe('importMermaidFlowchart', () => {
       importMermaidFlowchart(`flowchart LR
   A --> broken[`),
     ).resolves.toEqual({
+      status: 'unsupported',
+      reason: expect.any(String),
+    });
+  });
+
+  it('rejects model node IDs longer than the shared schema limit', async () => {
+    const longNodeId = `node${'a'.repeat(237)}`;
+
+    const result = await importMermaidFlowchart(`flowchart TB
+  ${longNodeId}`);
+
+    expect(result).toEqual({
+      status: 'unsupported',
+      reason: expect.any(String),
+    });
+  });
+
+  it('rejects constructed edge IDs longer than the shared schema limit', async () => {
+    const sourceId = `source${'a'.repeat(111)}`;
+    const targetId = `target${'b'.repeat(110)}`;
+
+    const result = await importMermaidFlowchart(`flowchart TB
+  ${sourceId} --> ${targetId}`);
+
+    expect(result).toEqual({
+      status: 'unsupported',
+      reason: expect.any(String),
+    });
+  });
+});
+
+describe('normalizeMermaidFlowchartDiagram runtime guards', () => {
+  it.each([
+    [
+      'non-string node labels',
+      parsedFlowchartModel({
+        nodes: [{ id: 'A', label: 42, shape: 'squareRect' }],
+      }),
+    ],
+    [
+      'non-string node shapes',
+      parsedFlowchartModel({
+        nodes: [{ id: 'A', label: 'A', shape: 42 }],
+      }),
+    ],
+    [
+      'non-string edge labels',
+      parsedFlowchartModel({
+        edges: [
+          {
+            start: 'A',
+            end: 'B',
+            label: 42,
+            arrowTypeStart: 'none',
+            arrowTypeEnd: 'arrow_point',
+            thickness: 'normal',
+          },
+        ],
+      }),
+    ],
+    [
+      'prototype-inherited line style names',
+      parsedFlowchartModel({
+        edges: [
+          {
+            start: 'A',
+            end: 'B',
+            label: '',
+            arrowTypeStart: 'none',
+            arrowTypeEnd: 'arrow_point',
+            thickness: 'toString',
+          },
+        ],
+      }),
+    ],
+  ])('fails closed for %s', (_caseName, diagram) => {
+    expect(normalizeMermaidFlowchartDiagram(diagram)).toEqual({
+      status: 'unsupported',
+      reason: expect.any(String),
+    });
+  });
+
+  it('rejects unreviewed flowchart-like Mermaid model types', () => {
+    expect(
+      normalizeMermaidFlowchartDiagram(
+        parsedFlowchartModel({ type: 'flowchart-future' }),
+      ),
+    ).toEqual({
       status: 'unsupported',
       reason: expect.any(String),
     });

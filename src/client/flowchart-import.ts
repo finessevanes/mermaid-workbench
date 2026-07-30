@@ -33,6 +33,9 @@ interface FlowchartData {
   edges: Record<string, unknown>[];
 }
 
+const MAX_FLOWCHART_ID_LENGTH = 240;
+const reviewedFlowchartTypes = new Set(['flowchart-v2']);
+
 const lineStyle = {
   normal: 'solid',
   dotted: 'dotted',
@@ -113,6 +116,16 @@ function requireString(
   return value;
 }
 
+function requireFlowchartId(value: unknown, description: string): string {
+  const id = requireString(value, description);
+  if (id.length > MAX_FLOWCHART_ID_LENGTH) {
+    throw new Error(
+      `Mermaid ${description} exceeds the supported ID length.`,
+    );
+  }
+  return id;
+}
+
 function containsHtml(value: string): boolean {
   return /<\/?[A-Za-z][^>]*>/.test(value);
 }
@@ -131,7 +144,7 @@ function normalizeNodes(
 ): Pick<ImportedFlowchart, 'nodes' | 'warnings'> {
   const warnings: ImportedFlowchart['warnings'] = [];
   const normalized = nodes.map((node) => {
-    const id = requireString(node.id, 'flowchart node ID');
+    const id = requireFlowchartId(node.id, 'flowchart node ID');
     const label = requireString(node.label, `label for node "${id}"`, true);
     if (containsHtml(label)) {
       throw new Error('HTML labels are not supported in interactive mode.');
@@ -140,10 +153,7 @@ function normalizeNodes(
       throw new Error('Interactive Mermaid nodes are not supported.');
     }
 
-    const shape =
-      typeof node.shape === 'string' && node.shape.length > 0
-        ? node.shape
-        : 'squareRect';
+    const shape = requireString(node.shape, `shape for node "${id}"`);
     if (!supportedShapes.has(shape)) {
       warnings.push({ code: 'SHAPE_FALLBACK', nodeId: id });
     }
@@ -155,7 +165,7 @@ function normalizeNodes(
 }
 
 function normalizeLineStyle(value: unknown): FlowchartLineStyle {
-  if (typeof value === 'string' && value in lineStyle) {
+  if (typeof value === 'string' && Object.hasOwn(lineStyle, value)) {
     return lineStyle[value as keyof typeof lineStyle];
   }
   throw new Error('Mermaid returned an unsupported edge line style.');
@@ -175,18 +185,25 @@ function normalizeEdges(edges: Record<string, unknown>[]): FlowchartEdgeV1[] {
   const endpointOccurrences = new Map<string, number>();
 
   return edges.map((edge) => {
-    const source = requireString(edge.start, 'edge source');
-    const target = requireString(edge.end, 'edge target');
+    const source = requireFlowchartId(edge.start, 'edge source');
+    const target = requireFlowchartId(edge.end, 'edge target');
     const endpointKey = `${source}\u0000${target}`;
     const occurrence = endpointOccurrences.get(endpointKey) ?? 0;
     endpointOccurrences.set(endpointKey, occurrence + 1);
-    const label =
-      typeof edge.label === 'string' && edge.label.length > 0
-        ? edge.label
-        : undefined;
+    const parsedLabel = requireString(edge.label, 'edge label', true);
+    if (containsHtml(parsedLabel)) {
+      throw new Error(
+        'HTML edge labels are not supported in interactive mode.',
+      );
+    }
+    const label = parsedLabel.length > 0 ? parsedLabel : undefined;
+    const id = `edge|${encodeURIComponent(source)}|${encodeURIComponent(target)}|${occurrence}`;
+    if (id.length > MAX_FLOWCHART_ID_LENGTH) {
+      throw new Error('Mermaid edge ID exceeds the supported ID length.');
+    }
 
     return {
-      id: `${encodeURIComponent(source)}-${encodeURIComponent(target)}-${occurrence}`,
+      id,
       source,
       target,
       ...(label === undefined ? {} : { label }),
@@ -209,13 +226,15 @@ function conciseReason(error: unknown): string {
   return firstLine.slice(0, 180);
 }
 
-export async function importMermaidFlowchart(
-  source: string,
-): Promise<FlowchartImportResult> {
+export function normalizeMermaidFlowchartDiagram(
+  diagram: unknown,
+): FlowchartImportResult {
   try {
-    const mermaid = await getMermaid();
-    const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
-    if (!diagram.type.startsWith('flowchart')) {
+    if (
+      !isRecord(diagram) ||
+      typeof diagram.type !== 'string' ||
+      !reviewedFlowchartTypes.has(diagram.type)
+    ) {
       return {
         status: 'unsupported',
         reason: 'Only Mermaid flowcharts support interactive mode.',
@@ -245,6 +264,18 @@ export async function importMermaidFlowchart(
         warnings,
       },
     };
+  } catch (error) {
+    return { status: 'unsupported', reason: conciseReason(error) };
+  }
+}
+
+export async function importMermaidFlowchart(
+  source: string,
+): Promise<FlowchartImportResult> {
+  try {
+    const mermaid = await getMermaid();
+    const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
+    return normalizeMermaidFlowchartDiagram(diagram);
   } catch (error) {
     return { status: 'unsupported', reason: conciseReason(error) };
   }
