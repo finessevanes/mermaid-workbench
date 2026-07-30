@@ -69,6 +69,7 @@ export function EditorView({
   });
   const [conflict, setConflict] = useState<ConflictDetails | null>(null);
   const [sourceCollapsed, setSourceCollapsed] = useState(false);
+  const [sourceLayoutRevision, setSourceLayoutRevision] = useState(0);
   const pendingSave = useRef<Promise<void> | null>(null);
   const collapseSourceRef = useRef<HTMLButtonElement>(null);
   const expandSourceRef = useRef<HTMLButtonElement>(null);
@@ -88,12 +89,14 @@ export function EditorView({
 
   const collapseSource = () => {
     sourceFocusTargetRef.current = 'expand';
+    setSourceLayoutRevision((current) => current + 1);
     setSourceCollapsed(true);
     window.requestAnimationFrame(() => expandSourceRef.current?.focus());
   };
 
   const expandSource = () => {
     sourceFocusTargetRef.current = 'collapse';
+    setSourceLayoutRevision((current) => current + 1);
     setSourceCollapsed(false);
     window.requestAnimationFrame(() => collapseSourceRef.current?.focus());
   };
@@ -364,6 +367,7 @@ export function EditorView({
             svg={preview.svg}
             rendering={preview.rendering}
             error={preview.error}
+            sourceLayoutRevision={sourceLayoutRevision}
           />
         </div>
       </section>

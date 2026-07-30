@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -22,6 +23,7 @@ interface PreviewViewportProps {
   svg: string;
   rendering: boolean;
   error: string | null;
+  sourceLayoutRevision?: number;
 }
 
 function measureSvg(svgElement: SVGSVGElement): ViewportSize | null {
@@ -84,10 +86,23 @@ export function PreviewViewport(
   const initialFitRef = useRef(false);
   const contentSizeRef = useRef<ViewportSize | null>(null);
   const fittedViewportSizeRef = useRef<ViewportSize | null>(null);
+  const sourceLayoutRevisionRef = useRef(props.sourceLayoutRevision ?? 0);
+  const sourceLayoutFitSuppressionRevisionRef = useRef<number | null>(null);
   const pointerRef = useRef<{ pointerId: number; x: number; y: number } | null>(
     null,
   );
   const pointerCaptureViewportRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const sourceLayoutRevision = props.sourceLayoutRevision ?? 0;
+    if (
+      sourceLayoutRevision !== sourceLayoutRevisionRef.current &&
+      automaticFitRef.current
+    ) {
+      sourceLayoutFitSuppressionRevisionRef.current = sourceLayoutRevision;
+    }
+    sourceLayoutRevisionRef.current = sourceLayoutRevision;
+  }, [props.sourceLayoutRevision]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -131,6 +146,13 @@ export function PreviewViewport(
     }
 
     const applyFit = () => {
+      const sourceLayoutRevision = sourceLayoutRevisionRef.current;
+      if (
+        sourceLayoutFitSuppressionRevisionRef.current === sourceLayoutRevision
+      ) {
+        sourceLayoutFitSuppressionRevisionRef.current = null;
+        return;
+      }
       const contentSize = contentSizeRef.current;
       if (!automaticFitRef.current || !contentSize) {
         return;

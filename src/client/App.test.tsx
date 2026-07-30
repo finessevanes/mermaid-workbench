@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type {
@@ -303,6 +303,87 @@ describe('App', () => {
 
     expect(screen.getByText('Source has a syntax error')).toBeInTheDocument();
     expect(preview).toContainHTML('Idea --&gt; Ship');
+  });
+
+  it('preserves the fitted preview transform through source collapse and later refits genuine resize', async () => {
+    let resizeCallback: ResizeObserverCallback | null = null;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class TestResizeObserver implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = TestResizeObserver;
+
+    try {
+      const user = userEvent.setup();
+      const client = createMemoryApi({
+        projects: [project],
+        diagrams: [diagram],
+      });
+      render(
+        <App
+          client={client}
+          renderDiagram={async (source) =>
+            `<svg viewBox="0 0 400 200"><text>${source}</text></svg>`
+          }
+          autosaveDelay={10}
+        />,
+      );
+
+      await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+      const canvas = await screen.findByTestId('mermaid-preview');
+      await waitFor(() => expect(canvas).toContainHTML('Idea --&gt; Ship'));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Fit diagram' })).toBeEnabled(),
+      );
+      const preview = screen.getByRole('region', { name: 'Diagram preview' });
+      let size = { width: 1000, height: 700 };
+      Object.defineProperty(preview, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({
+          ...size,
+          top: 0,
+          left: 0,
+          right: size.width,
+          bottom: size.height,
+          x: 0,
+          y: 0,
+          toJSON: () => undefined,
+        }),
+      });
+      act(() => {
+        resizeCallback?.([], {} as ResizeObserver);
+      });
+      const transform = screen.getByTestId('preview-transform');
+      const fittedTransform = transform.style.transform;
+
+      size = { width: 800, height: 600 };
+      await user.click(screen.getByRole('button', { name: 'Collapse source' }));
+      act(() => {
+        resizeCallback?.([], {} as ResizeObserver);
+      });
+      expect(transform.style.transform).toBe(fittedTransform);
+
+      size = { width: 1000, height: 700 };
+      await user.click(screen.getByRole('button', { name: 'Expand source' }));
+      act(() => {
+        resizeCallback?.([], {} as ResizeObserver);
+      });
+      expect(transform.style.transform).toBe(fittedTransform);
+
+      size = { width: 900, height: 650 };
+      act(() => {
+        resizeCallback?.([], {} as ResizeObserver);
+      });
+      expect(transform.style.transform).not.toBe(fittedTransform);
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
   });
 
   it('preserves the last valid preview and does not save invalid source', async () => {
