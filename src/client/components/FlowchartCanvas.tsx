@@ -215,6 +215,7 @@ function FlowchartCanvasContents({
           elementsSelectable
           nodesDraggable
           nodesFocusable
+          disableKeyboardA11y
           edgesFocusable={false}
           selectNodesOnDrag={false}
           selectionOnDrag={false}

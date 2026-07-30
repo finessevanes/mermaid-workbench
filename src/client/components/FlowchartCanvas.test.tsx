@@ -37,6 +37,7 @@ vi.mock('@xyflow/react', () => ({
     }>;
     nodeTypes: Record<string, React.ComponentType<any>>;
     edgeTypes: Record<string, React.ComponentType<any>>;
+    disableKeyboardA11y?: boolean;
     onMove: (event: unknown, viewport: { zoom: number }) => void;
     onNodeDragStop: () => void;
     onNodesChange: (changes: unknown[]) => void;
@@ -57,6 +58,7 @@ vi.mock('@xyflow/react', () => ({
     const EdgeComponent = props.edgeTypes.floatingFlowchart;
     return (
       <div data-testid="react-flow">
+        <output data-testid="keyboard-a11y-disabled">{String(props.disableKeyboardA11y)}</output>
         <svg>
           {props.edges.map((edge) => (
             <EdgeComponent
@@ -214,6 +216,7 @@ describe('FlowchartCanvas', () => {
     expect(screen.getByRole('button', { name: 'Fit diagram' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '100%' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Reset layout' })).toBeEnabled();
+    expect(screen.getByTestId('keyboard-a11y-disabled')).toHaveTextContent('true');
   });
 
   it('clamps zoom controls to the inclusive 10% and 400% bounds', async () => {
@@ -396,6 +399,9 @@ describe('FlowchartCanvas', () => {
     const idea = screen.getByLabelText('Idea');
     idea.focus();
     await user.keyboard('{Shift>}{ArrowDown}{/Shift}');
+    await user.keyboard('{Alt>}{ArrowLeft}{/Alt}');
+    await user.keyboard('{Control>}{ArrowUp}{/Control}');
+    await user.keyboard('{Meta>}{ArrowRight}{/Meta}');
     await user.keyboard('a');
 
     expect(onCanvasChange).toHaveBeenCalledOnce();
