@@ -681,6 +681,100 @@ a { color: inherit; }
 
 .source-footer { display: flex; justify-content: space-between; padding: .8rem 1rem; color: var(--ink-faint); border-top: 1px solid var(--line); font-size: .68rem; }
 
+/* Interactive flowchart canvas */
+.flowchart-canvas {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--panel);
+}
+
+.flowchart-canvas__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  align-items: center;
+  padding: .75rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.flowchart-canvas__toolbar .preview-toolbar__button:last-child {
+  margin-left: auto;
+}
+
+.flowchart-canvas__viewport {
+  position: relative;
+  min-height: 35rem;
+  flex: 1;
+  overflow: hidden;
+  background:
+    linear-gradient(rgb(223 227 234 / 78%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(223 227 234 / 78%) 1px, transparent 1px),
+    var(--panel-blue);
+  background-size: 28px 28px;
+}
+
+.flowchart-canvas .react-flow { background: transparent; }
+.flowchart-canvas .react-flow__pane { cursor: grab; }
+.flowchart-canvas .react-flow__pane.dragging { cursor: grabbing; }
+.flowchart-canvas .react-flow__edge-path { stroke: var(--ink-soft); stroke-width: 1.8; }
+.flowchart-canvas .react-flow__edge-text { fill: var(--ink-soft); font-size: .73rem; font-weight: 750; }
+.flowchart-canvas .react-flow__node { cursor: grab; }
+.flowchart-canvas .react-flow__node.dragging { cursor: grabbing; }
+
+.flowchart-node {
+  display: grid;
+  min-height: 4.5rem;
+  place-items: center;
+  padding: .65rem .85rem;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1.5px solid var(--cobalt);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  cursor: inherit;
+  font-size: .82rem;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.flowchart-node:focus-visible {
+  outline: 3px solid rgb(47 94 229 / 38%);
+  outline-offset: 3px;
+}
+
+.flowchart-node--selected,
+.flowchart-canvas .react-flow__node.selected .flowchart-node {
+  border-color: var(--cobalt-deep);
+  box-shadow: 0 0 0 3px rgb(47 94 229 / 18%), var(--shadow-sm);
+}
+
+.flowchart-node--rounded-rect { border-radius: 999px; }
+.flowchart-node--circle,
+.flowchart-node--doublecircle { border-radius: 50%; }
+.flowchart-node--doublecircle { outline: 3px double var(--cobalt); outline-offset: -7px; }
+.flowchart-node--diamond { border-radius: 0; transform: rotate(45deg); }
+.flowchart-node--diamond > span { transform: rotate(-45deg); }
+.flowchart-node--stadium { border-radius: 999px; }
+.flowchart-node--subroutine { box-shadow: inset 8px 0 0 rgb(47 94 229 / 20%), inset -8px 0 0 rgb(47 94 229 / 20%), var(--shadow-sm); }
+.flowchart-node--cylinder { border-radius: 50% / 14%; }
+.flowchart-node--hexagon { clip-path: polygon(15% 0, 85% 0, 100% 50%, 85% 100%, 15% 100%, 0 50%); }
+.flowchart-node--trapezoid { clip-path: polygon(12% 0, 88% 0, 100% 100%, 0 100%); }
+.flowchart-node--inv-trapezoid { clip-path: polygon(0 0, 100% 0, 88% 100%, 12% 100%); }
+.flowchart-node--lean-left { clip-path: polygon(16% 0, 100% 0, 84% 100%, 0 100%); }
+.flowchart-node--lean-right { clip-path: polygon(0 0, 84% 0, 100% 100%, 16% 100%); }
+
+.flowchart-handle {
+  width: 1px;
+  height: 1px;
+  min-width: 1px;
+  min-height: 1px;
+  opacity: 0;
+}
+
 /* Dialogs */
 .dialog {
   width: min(34rem, calc(100% - 2rem));
@@ -741,6 +835,7 @@ a { color: inherit; }
   .source-rail-toggle__label--compact { display: inline; }
   .source-rail-toggle__error { margin: 0 0 0 auto; }
   .source-fields textarea { min-height: 24rem; }
+  .flowchart-canvas__viewport { min-height: 28rem; }
 }
 
 @media (max-width: 620px) {
@@ -758,6 +853,8 @@ a { color: inherit; }
   .workspace-grid { padding: 0; }
   .workspace-panel { border-radius: 0 !important; }
   .preview-viewport { border-radius: 0; }
+  .flowchart-canvas__toolbar .preview-toolbar__button:last-child { margin-left: 0; }
+  .flowchart-canvas__viewport { min-height: 24rem; }
   .conflict-grid { grid-template-columns: 1fr; }
   .dialog form { padding: 1.5rem; }
 }
