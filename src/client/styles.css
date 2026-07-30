@@ -583,6 +583,9 @@ a { color: inherit; }
 }
 
 .workspace-panel { display: flex; min-width: 0; min-height: calc(100vh - 9rem); flex-direction: column; background: var(--panel); }
+.workspace-panel[hidden] { display: none; }
+.workspace-panel--source,
+.workspace-panel--source-collapsed { border-radius: var(--radius-md) 0 0 var(--radius-md); }
 .workspace-panel:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
 .workspace-panel:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
 .preview-viewport { display: flex; min-width: 0; min-height: calc(100vh - 9rem); flex-direction: column; background: var(--panel); border-radius: 0 var(--radius-md) var(--radius-md) 0; }

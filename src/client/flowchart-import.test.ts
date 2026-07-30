@@ -185,13 +185,20 @@ describe('importMermaidFlowchart', () => {
     }
   });
 
-  it('returns unsupported instead of throwing for invalid Mermaid syntax', async () => {
+  it.each([
+    ['a malformed flowchart', `flowchart LR\n  A --> broken[`],
+    ['empty input', ''],
+    ['nonsense input', 'this is not Mermaid'],
+  ])('returns a structured invalid-syntax result for %s', async (
+    _caseName,
+    source,
+  ) => {
     await expect(
-      importMermaidFlowchart(`flowchart LR
-  A --> broken[`),
+      importMermaidFlowchart(source),
     ).resolves.toEqual({
       status: 'unsupported',
       reason: expect.any(String),
+      code: 'INVALID_SYNTAX',
     });
   });
 

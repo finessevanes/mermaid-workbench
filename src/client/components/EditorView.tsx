@@ -623,89 +623,90 @@ export function EditorView({
         <div
           className={`workspace-grid${sourceCollapsed ? ' workspace-grid--source-collapsed' : ''}`}
         >
-          {sourceCollapsed ? (
-            <section
-              className="workspace-panel workspace-panel--source-collapsed"
-              aria-label="Source"
+          <section
+            className="workspace-panel workspace-panel--source-collapsed"
+            aria-label="Source"
+            hidden={!sourceCollapsed}
+          >
+            <button
+              ref={expandSourceRef}
+              type="button"
+              className="source-rail-toggle"
+              aria-label="Expand source"
+              onClick={expandSource}
             >
-              <button
-                ref={expandSourceRef}
-                type="button"
-                className="source-rail-toggle"
-                aria-label="Expand source"
-                onClick={expandSource}
-              >
-                <span aria-hidden="true">›</span>
-                <span className="source-rail-toggle__label source-rail-toggle__label--desktop">
-                  Source
+              <span aria-hidden="true">›</span>
+              <span className="source-rail-toggle__label source-rail-toggle__label--desktop">
+                Source
+              </span>
+              <span className="source-rail-toggle__label source-rail-toggle__label--compact">
+                Show source
+              </span>
+              {preview.error ? (
+                <span className="source-rail-toggle__error">
+                  Source has a syntax error
                 </span>
-                <span className="source-rail-toggle__label source-rail-toggle__label--compact">
-                  Show source
-                </span>
-                {preview.error ? (
-                  <span className="source-rail-toggle__error">
-                    Source has a syntax error
-                  </span>
-                ) : null}
-              </button>
-            </section>
-          ) : (
-            <section className="workspace-panel workspace-panel--source">
-              <div className="workspace-panel__header">
-                <div>
-                  <span className="panel-index">01</span>
-                  <h2>Source</h2>
-                </div>
-                <div className="source-header__actions">
-                  <span className="panel-hint">Mermaid syntax</span>
-                  <button
-                    ref={collapseSourceRef}
-                    type="button"
-                    className="icon-button source-collapse-button"
-                    aria-label="Collapse source"
-                    onClick={collapseSource}
-                  >
-                    <span aria-hidden="true">‹</span>
-                  </button>
-                </div>
+              ) : null}
+            </button>
+          </section>
+          <section
+            className="workspace-panel workspace-panel--source"
+            hidden={sourceCollapsed}
+          >
+            <div className="workspace-panel__header">
+              <div>
+                <span className="panel-index">01</span>
+                <h2>Source</h2>
               </div>
-              <div className="source-fields">
-                <label>
-                  <span>Diagram title</span>
-                  <input
-                    value={draft.title}
-                    maxLength={120}
+              <div className="source-header__actions">
+                <span className="panel-hint">Mermaid syntax</span>
+                <button
+                  ref={collapseSourceRef}
+                  type="button"
+                  className="icon-button source-collapse-button"
+                  aria-label="Collapse source"
+                  onClick={collapseSource}
+                >
+                  <span aria-hidden="true">‹</span>
+                </button>
+              </div>
+            </div>
+            <div className="source-fields">
+              <label>
+                <span>Diagram title</span>
+                <input
+                  value={draft.title}
+                  maxLength={120}
+                  onChange={(event) =>
+                    updateDraft({ title: event.currentTarget.value })
+                  }
+                />
+              </label>
+              {presentation.mode === 'interactive' ? (
+                <MermaidImportPanel
+                  key={diagram.id}
+                  source={draft.source}
+                  canvas={presentation.canvas}
+                  onApply={applyMermaidImport}
+                />
+              ) : (
+                <label className="source-editor">
+                  <span>Mermaid source</span>
+                  <textarea
+                    value={draft.source}
+                    spellCheck={false}
                     onChange={(event) =>
-                      updateDraft({ title: event.currentTarget.value })
+                      updateDraft({ source: event.currentTarget.value })
                     }
                   />
                 </label>
-                {presentation.mode === 'interactive' ? (
-                  <MermaidImportPanel
-                    key={diagram.id}
-                    source={draft.source}
-                    canvas={presentation.canvas}
-                    onApply={applyMermaidImport}
-                  />
-                ) : (
-                  <label className="source-editor">
-                    <span>Mermaid source</span>
-                    <textarea
-                      value={draft.source}
-                      spellCheck={false}
-                      onChange={(event) =>
-                        updateDraft({ source: event.currentTarget.value })
-                      }
-                    />
-                  </label>
-                )}
-              </div>
-              <footer className="source-footer">
-                <span>{draft.source.split('\n').length} lines</span>
-                <span>{draft.source.length.toLocaleString()} characters</span>
-              </footer>
-            </section>
-          )}
+              )}
+            </div>
+            <footer className="source-footer">
+              <span>{draft.source.split('\n').length} lines</span>
+              <span>{draft.source.length.toLocaleString()} characters</span>
+            </footer>
+          </section>
 
           {presentation.mode === 'interactive' ? (
             <section className="workspace-panel workspace-panel--canvas">

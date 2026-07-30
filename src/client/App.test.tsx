@@ -454,7 +454,7 @@ describe('App', () => {
 
     const expand = screen.getByRole('button', { name: 'Expand source' });
     expect(expand).toHaveFocus();
-    expect(screen.queryByLabelText('Mermaid source')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Mermaid source')).not.toBeVisible();
 
     await user.click(expand);
     expect(screen.getByRole('button', { name: 'Collapse source' })).toHaveFocus();
@@ -757,6 +757,37 @@ describe('App', () => {
 
     expect(screen.getByLabelText('Mermaid source')).toHaveValue(diagram.source);
     expect(client.updateCalls).toBe(0);
+  });
+
+  it('preserves the exact staged import while the source rail is collapsed', async () => {
+    const user = userEvent.setup();
+    const stagedSource = 'flowchart LR\n  staged --> exact --> source';
+    const client = createMemoryApi({
+      projects: [project],
+      diagrams: [{ ...diagram, canvas: canvasAt(10, 20) }],
+    });
+    render(<App client={client} renderDiagram={validRenderer} autosaveDelay={10} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open Release path' }));
+    await user.click(screen.getByRole('button', { name: 'Edit import' }));
+    fireEvent.change(screen.getByLabelText('Mermaid source'), {
+      target: { value: stagedSource },
+    });
+    await user.click(screen.getByRole('button', { name: 'Collapse source' }));
+
+    expect(screen.queryByRole('button', { name: 'Apply import' }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' }))
+      .not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Expand source' }));
+    expect(screen.getByLabelText('Mermaid source')).toHaveValue(stagedSource);
+    expect(screen.getByLabelText('Mermaid source'))
+      .not.toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Apply import' }))
+      .toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' }))
+      .toBeInTheDocument();
   });
 
   it('applies staged Mermaid source and reconciled canvas atomically in one save', async () => {

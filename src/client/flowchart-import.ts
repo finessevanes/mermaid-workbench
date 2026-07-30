@@ -20,7 +20,11 @@ export interface ImportedFlowchart {
 
 export type FlowchartImportResult =
   | { status: 'compatible'; graph: ImportedFlowchart }
-  | { status: 'unsupported'; reason: string };
+  | {
+    status: 'unsupported';
+    reason: string;
+    code?: 'INVALID_SYNTAX';
+  };
 
 interface FlowchartDatabase {
   getData: () => unknown;
@@ -277,6 +281,10 @@ export async function importMermaidFlowchart(
     const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
     return normalizeMermaidFlowchartDiagram(diagram);
   } catch (error) {
-    return { status: 'unsupported', reason: conciseReason(error) };
+    return {
+      status: 'unsupported',
+      reason: conciseReason(error),
+      code: 'INVALID_SYNTAX',
+    };
   }
 }

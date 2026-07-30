@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { FlowchartCanvasV1 } from '../../shared/flowchart-canvas-schema';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  validateFlowchartCanvas,
+  type FlowchartCanvasV1,
+} from '../../shared/flowchart-canvas-schema';
 import {
   importMermaidFlowchart,
   type FlowchartImportResult,
@@ -29,10 +38,6 @@ type ImportState =
     result: FlowchartImportResult;
   };
 
-function isSyntaxError(reason: string) {
-  return /\b(parse|syntax|lexical)\b/i.test(reason);
-}
-
 export function MermaidImportPanel({
   source,
   canvas,
@@ -42,6 +47,9 @@ export function MermaidImportPanel({
   const [copyStatus, setCopyStatus] = useState<'Copied' | 'Copy failed' | null>(
     null,
   );
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const sourceTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const returnFocusToEditRef = useRef(false);
 
   useEffect(() => {
     if (importState.mode !== 'edit' || !importState.checking) {
@@ -77,21 +85,42 @@ export function MermaidImportPanel({
       return null;
     }
     try {
-      return reconcileFlowchartImport(canvas, importState.result.graph);
+      const result = reconcileFlowchartImport(
+        canvas,
+        importState.result.graph,
+      );
+      return {
+        status: 'ready' as const,
+        canvas: validateFlowchartCanvas(result.canvas),
+        summary: result.summary,
+      };
     } catch {
-      return null;
+      return { status: 'invalid' as const };
     }
   }, [canvas, importState]);
+
+  useLayoutEffect(() => {
+    if (importState.mode === 'edit') {
+      sourceTextareaRef.current?.focus();
+      return;
+    }
+    if (returnFocusToEditRef.current) {
+      returnFocusToEditRef.current = false;
+      editButtonRef.current?.focus();
+    }
+  }, [importState.mode]);
 
   const displayedSource = importState.mode === 'edit'
     ? importState.source
     : source;
-  const unsupportedReason =
+  const unsupportedResult =
     importState.mode === 'edit' &&
     !importState.checking &&
     importState.result?.status === 'unsupported'
-      ? importState.result.reason
+      ? importState.result
       : null;
+  const readyReconciliation =
+    reconciliation?.status === 'ready' ? reconciliation : null;
 
   const copyMermaid = async () => {
     try {
@@ -105,24 +134,25 @@ export function MermaidImportPanel({
   const applyImport = () => {
     if (
       importState.mode !== 'edit' ||
-      !reconciliation
+      !readyReconciliation
     ) {
       return;
     }
     if (
-      reconciliation.summary.removed > 0 &&
+      readyReconciliation.summary.removed > 0 &&
       !window.confirm(
-        `This import removes ${reconciliation.summary.removed} node(s) from the visual canvas. Apply it?`,
+        `This import removes ${readyReconciliation.summary.removed} node(s) from the visual canvas. Apply it?`,
       )
     ) {
       return;
     }
     const stagedSource = importState.source;
+    returnFocusToEditRef.current = true;
     setImportState({ mode: 'view' });
     onApply({
       source: stagedSource,
-      canvas: reconciliation.canvas,
-      summary: reconciliation.summary,
+      canvas: readyReconciliation.canvas,
+      summary: readyReconciliation.summary,
     });
   };
 
@@ -134,6 +164,7 @@ export function MermaidImportPanel({
       <label className="source-editor mermaid-import__source">
         <span>Mermaid source</span>
         <textarea
+          ref={sourceTextareaRef}
           value={displayedSource}
           readOnly={importState.mode === 'view'}
           spellCheck={false}
@@ -158,28 +189,33 @@ export function MermaidImportPanel({
         <div className="mermaid-import__compatibility">
           {importState.checking ? (
             <p role="status">Checking compatibility…</p>
-          ) : unsupportedReason ? (
+          ) : unsupportedResult ? (
             <p className="mermaid-import__message mermaid-import__message--error" role="alert">
               <strong>
-                {isSyntaxError(unsupportedReason)
+                {unsupportedResult.code === 'INVALID_SYNTAX'
                   ? 'Mermaid syntax error'
                   : 'Not compatible'}
               </strong>
-              <span>{unsupportedReason}</span>
+              <span>{unsupportedResult.reason}</span>
             </p>
-          ) : reconciliation ? (
+          ) : readyReconciliation ? (
             <div
               className="mermaid-import__summary"
               aria-label="Import reconciliation"
+              aria-live="polite"
+              role="status"
             >
-              <span>{reconciliation.summary.added} added</span>
-              <span>{reconciliation.summary.removed} removed</span>
-              <span>{reconciliation.summary.preserved} preserved</span>
+              <span>{readyReconciliation.summary.added} added</span>
+              <span>{readyReconciliation.summary.removed} removed</span>
+              <span>{readyReconciliation.summary.preserved} preserved</span>
             </div>
           ) : (
             <p className="mermaid-import__message mermaid-import__message--error" role="alert">
-              <strong>Not compatible</strong>
-              <span>The imported flowchart could not be laid out safely.</span>
+              <strong>Import validation failed</strong>
+              <span>
+                This import could not be validated safely. The current canvas
+                is unchanged.
+              </span>
             </p>
           )}
         </div>
@@ -188,6 +224,7 @@ export function MermaidImportPanel({
       <div className="mermaid-import__actions">
         {importState.mode === 'view' ? (
           <button
+            ref={editButtonRef}
             type="button"
             className="button button--secondary"
             onClick={() => {
@@ -207,7 +244,7 @@ export function MermaidImportPanel({
             <button
               type="button"
               className="button button--primary"
-              disabled={!reconciliation}
+              disabled={!readyReconciliation}
               onClick={applyImport}
             >
               Apply import
@@ -217,6 +254,7 @@ export function MermaidImportPanel({
               className="button button--quiet"
               onClick={() => {
                 setCopyStatus(null);
+                returnFocusToEditRef.current = true;
                 setImportState({ mode: 'view' });
               }}
             >

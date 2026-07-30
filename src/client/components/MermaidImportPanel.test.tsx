@@ -11,15 +11,19 @@ import type {
 } from '../flowchart-import';
 import { MermaidImportPanel } from './MermaidImportPanel';
 
-const importer = vi.hoisted(() => vi.fn<
-  (source: string) => Promise<FlowchartImportResult>
->());
+const importer = vi.hoisted(() => ({
+  actual: undefined as
+    | undefined
+    | ((source: string) => Promise<FlowchartImportResult>),
+  mock: vi.fn<(source: string) => Promise<FlowchartImportResult>>(),
+}));
 
 vi.mock('../flowchart-import', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../flowchart-import')>();
+  importer.actual = actual.importMermaidFlowchart;
   return {
     ...actual,
-    importMermaidFlowchart: importer,
+    importMermaidFlowchart: importer.mock,
   };
 });
 
@@ -129,8 +133,8 @@ async function openEditor(user: ReturnType<typeof userEvent.setup>) {
 
 describe('MermaidImportPanel', () => {
   beforeEach(() => {
-    importer.mockReset();
-    importer.mockResolvedValue(compatibleResult());
+    importer.mock.mockReset();
+    importer.mock.mockResolvedValue(compatibleResult());
   });
 
   afterEach(() => {
@@ -173,7 +177,7 @@ describe('MermaidImportPanel', () => {
 
     expect(screen.getByLabelText('Mermaid source')).toHaveValue(source);
     expect(screen.getByLabelText('Mermaid source')).toHaveAttribute('readonly');
-    expect(importer).not.toHaveBeenCalled();
+    expect(importer.mock).not.toHaveBeenCalled();
   });
 
   it('waits exactly 220 ms after the latest edit before checking compatibility', async () => {
@@ -190,22 +194,23 @@ describe('MermaidImportPanel', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(219);
     });
-    expect(importer).not.toHaveBeenCalled();
+    expect(importer.mock).not.toHaveBeenCalled();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });
-    expect(importer).toHaveBeenCalledOnce();
-    expect(importer).toHaveBeenCalledWith(
+    expect(importer.mock).toHaveBeenCalledOnce();
+    expect(importer.mock).toHaveBeenCalledWith(
       'flowchart LR\n  idea --> changed',
     );
   });
 
   it('labels invalid Mermaid as a syntax error and keeps Apply disabled', async () => {
     const user = userEvent.setup();
-    importer.mockResolvedValue({
+    importer.mock.mockResolvedValue({
       status: 'unsupported',
-      reason: 'Parse error on line 2',
+      reason: 'No diagram type detected matching given configuration',
+      code: 'INVALID_SYNTAX',
     });
     render(
       <MermaidImportPanel source={source} canvas={canvas} onApply={vi.fn()} />,
@@ -220,14 +225,14 @@ describe('MermaidImportPanel', () => {
       await screen.findByRole('alert', {}, { timeout: 1000 }),
     ).toHaveTextContent('Mermaid syntax error');
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Parse error on line 2',
+      'No diagram type detected matching given configuration',
     );
     expect(screen.getByRole('button', { name: 'Apply import' })).toBeDisabled();
   });
 
   it('shows an unsupported compatibility reason and keeps Apply disabled', async () => {
     const user = userEvent.setup();
-    importer.mockResolvedValue({
+    importer.mock.mockResolvedValue({
       status: 'unsupported',
       reason: 'Only Mermaid flowcharts support interactive mode.',
     });
@@ -249,6 +254,44 @@ describe('MermaidImportPanel', () => {
     expect(screen.getByRole('button', { name: 'Apply import' })).toBeDisabled();
   });
 
+  it.each([
+    ['empty input', '', 'Mermaid syntax error'],
+    ['nonsense input', 'this is not Mermaid', 'Mermaid syntax error'],
+    [
+      'a sequence diagram',
+      'sequenceDiagram\n  Alice->>Bob: Hello',
+      'Not compatible',
+    ],
+    [
+      'a subgraph flowchart',
+      'flowchart LR\n  subgraph Group\n    A --> B\n  end',
+      'Not compatible',
+    ],
+  ])('classifies real Mermaid compatibility for %s', async (
+    _caseName,
+    staged,
+    expectedHeading,
+  ) => {
+    const user = userEvent.setup();
+    importer.mock.mockImplementation((stagedSource) => {
+      if (!importer.actual) {
+        throw new Error('Expected the real Mermaid importer.');
+      }
+      return importer.actual(stagedSource);
+    });
+    render(
+      <MermaidImportPanel source={source} canvas={canvas} onApply={vi.fn()} />,
+    );
+
+    const stagedSource = await openEditor(user);
+    fireEvent.change(stagedSource, { target: { value: staged } });
+
+    expect(
+      await screen.findByRole('alert', {}, { timeout: 5000 }),
+    ).toHaveTextContent(expectedHeading);
+    expect(screen.getByRole('button', { name: 'Apply import' })).toBeDisabled();
+  });
+
   it('reports the exact reconciliation counts for compatible Mermaid', async () => {
     const user = userEvent.setup();
     render(
@@ -257,11 +300,76 @@ describe('MermaidImportPanel', () => {
 
     await openEditor(user);
 
-    expect(await screen.findByText('1 added', {}, { timeout: 1000 }))
-      .toBeInTheDocument();
-    expect(screen.getByText('1 removed')).toBeInTheDocument();
-    expect(screen.getByText('2 preserved')).toBeInTheDocument();
+    const summary = await screen.findByRole(
+      'status',
+      { name: 'Import reconciliation' },
+      { timeout: 1000 },
+    );
+    expect(summary).toHaveTextContent('1 added');
+    expect(summary).toHaveTextContent('1 removed');
+    expect(summary).toHaveTextContent('2 preserved');
     expect(screen.getByRole('button', { name: 'Apply import' })).toBeEnabled();
+  });
+
+  it('rejects a real compatible import whose reconciled canvas fails shared schema validation', async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const oversizedSource =
+      `flowchart LR\n  idea["${'x'.repeat(20_001)}"] --> ship`;
+    importer.mock.mockImplementation((stagedSource) => {
+      if (!importer.actual) {
+        throw new Error('Expected the real Mermaid importer.');
+      }
+      return importer.actual(stagedSource);
+    });
+    render(
+      <MermaidImportPanel
+        source={source}
+        canvas={canvas}
+        onApply={onApply}
+      />,
+    );
+
+    const stagedSource = await openEditor(user);
+    fireEvent.change(stagedSource, {
+      target: { value: oversizedSource },
+    });
+
+    expect(
+      await screen.findByRole('alert', {}, { timeout: 5000 }),
+    ).toHaveTextContent('could not be validated safely');
+    const apply = screen.getByRole('button', { name: 'Apply import' });
+    expect(apply).toBeDisabled();
+    await user.click(apply);
+    expect(onApply).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByLabelText('Mermaid source')).toHaveValue(source);
+  });
+
+  it('moves focus into staged editing and returns it to Edit import after Cancel and Apply', async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(
+      <MermaidImportPanel source={source} canvas={canvas} onApply={vi.fn()} />,
+    );
+
+    const firstStagedSource = await openEditor(user);
+    expect(firstStagedSource).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Edit import' })).toHaveFocus();
+
+    const secondStagedSource = await openEditor(user);
+    expect(secondStagedSource).toHaveFocus();
+    await waitFor(
+      () =>
+        expect(screen.getByRole('button', { name: 'Apply import' }))
+          .toBeEnabled(),
+      { timeout: 1000 },
+    );
+    await user.click(screen.getByRole('button', { name: 'Apply import' }));
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Edit import' })).toHaveFocus();
   });
 
   it('confirms an exact destructive summary and applies the staged source and reconciled canvas once', async () => {
